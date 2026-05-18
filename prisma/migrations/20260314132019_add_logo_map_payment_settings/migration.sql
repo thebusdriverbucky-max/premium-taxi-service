@@ -1,0 +1,8 @@
+-- AlterTable
+ALTER TABLE "StoreSettings" ADD COLUMN     "enableCardPayment" BOOLEAN NOT NULL DEFAULT true,
+ADD COLUMN     "enableCashPayment" BOOLEAN NOT NULL DEFAULT true,
+ADD COLUMN     "logoUrl" TEXT,
+ADD COLUMN     "mapCenterLat" DOUBLE PRECISION DEFAULT 34.9175,
+ADD COLUMN     "mapCenterLng" DOUBLE PRECISION DEFAULT 33.6290,
+ADD COLUMN     "mapCountryCode" TEXT DEFAULT 'cy',
+ADD COLUMN     "mapDefaultZoom" INTEGER DEFAULT 10;

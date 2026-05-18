@@ -1,0 +1,36 @@
+// lib/analytics.ts - Analytics wrapper (ready for future integration)
+
+export const analytics = {
+  // Will be configured when client provides GA4 tracking ID
+  pageview: (url: string) => {
+    if (typeof window !== 'undefined' && window.gtag) {
+      window.gtag('config', process.env.NEXT_PUBLIC_GA_ID || '', {
+        page_path: url,
+      });
+    }
+  },
+
+  event: (action: string, params?: Record<string, any>) => {
+    if (typeof window !== 'undefined' && window.gtag) {
+      window.gtag('event', action, params);
+    }
+  },
+
+  // Track trip bookings
+  tripBooked: (tripId: string, value: number, currency: string = 'EUR') => {
+    if (typeof window !== 'undefined' && window.gtag) {
+      window.gtag('event', 'purchase', {
+        transaction_id: tripId,
+        value,
+        currency,
+      });
+    }
+  },
+};
+
+// TypeScript types for gtag
+declare global {
+  interface Window {
+    gtag?: (...args: any[]) => void;
+  }
+}

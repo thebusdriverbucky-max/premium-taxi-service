@@ -1,0 +1,381 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String?
+  image         String?
+  emailVerified DateTime?
+  password      String?
+  role          UserRole  @default(CUSTOMER)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  resetToken       String?
+  resetTokenExpiry DateTime?
+
+  accounts  Account[]
+  sessions  Session[]
+  addresses Address[]
+  trips     Trip[]
+
+  @@index([email])
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@index([token])
+}
+
+model TariffPlan {
+  id            String   @id @default(cuid())
+  name          String
+  slug          String   @unique
+  description   String?
+  basePrice     Decimal  @db.Decimal(10, 2)
+  pricePerKm    Decimal  @db.Decimal(10, 2)
+  pricePerMin   Decimal  @default(0) @db.Decimal(10, 2)
+  minPrice      Decimal  @default(0) @db.Decimal(10, 2)
+  zones         Json?
+  currency      String   @default("EUR")
+  vehicleType   String?
+  maxPassengers Int      @default(4)
+  maxLuggage    Int      @default(2)
+  features      String[] @default([])
+  image         String?
+  isActive      Boolean  @default(true)
+  isFeatured    Boolean  @default(false)
+  sortOrder     Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  trips         Trip[]
+
+  @@index([isActive])
+  @@index([sortOrder])
+}
+
+model Trip {
+  id         String  @id @default(cuid())
+  tripNumber String? @unique
+  userId     String?
+  user       User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  // Маршрут
+  pickupAddress  String
+  dropoffAddress String
+  pickupLat      Float?
+  pickupLng      Float?
+  dropoffLat     Float?
+  dropoffLng     Float?
+  distance       Float?
+  duration       Int?
+
+  // Тариф
+  tariffPlanId String?
+  tariffPlan   TariffPlan? @relation(fields: [tariffPlanId], references: [id], onDelete: SetNull)
+
+  // Время
+  scheduledAt    DateTime?
+  completedAt    DateTime?
+  pickupDateTime DateTime?
+
+  // Пассажир
+  passengerName  String?
+  passengerPhone String?
+  passengerEmail String?
+  passengerCount Int?
+  flightNumber   String?
+  notes          String?
+
+  // Стоимость
+  basePrice Decimal? @db.Decimal(10, 2)
+  discountAmount Decimal? @db.Decimal(10, 2)
+  discountCodeId String?
+  discountCode   DiscountCode? @relation(fields: [discountCodeId], references: [id], onDelete: SetNull)
+  total     Decimal? @db.Decimal(10, 2)
+  currency  String   @default("EUR")
+
+  // Статус
+  status TripStatus @default(PENDING)
+
+  // Оплата
+  stripePaymentIntentId String?
+  paymentStatus         String  @default("unpaid")
+
+  // Водитель
+  driverName  String?
+  driverPhone String?
+  driverId    String?
+  driver      Driver?  @relation(fields: [driverId], references: [id], onDelete: SetNull)
+
+  vehicleId String?
+  vehicle   Vehicle? @relation(fields: [vehicleId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([status])
+  @@index([scheduledAt])
+  @@index([createdAt])
+}
+
+model Address {
+  id         String  @id @default(cuid())
+  userId     String?
+  user       User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  firstName  String
+  lastName   String
+  email      String
+  phone      String
+  street     String
+  city       String
+  state      String
+  postalCode String
+  country    String
+  isDefault  Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+}
+
+enum UserRole {
+  CUSTOMER
+  ADMIN
+}
+
+enum TripStatus {
+  PENDING
+  CONFIRMED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  REFUNDED
+}
+
+model DiscountCode {
+  id        String       @id @default(cuid())
+  code      String       @unique
+  type      DiscountType
+  value     Float
+  expiresAt DateTime?
+  isActive  Boolean      @default(true)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+  trips     Trip[]
+}
+
+enum DiscountType {
+  PERCENT
+  FIXED
+}
+
+model Coupon {
+  id          String    @id @default(cuid())
+  code        String    @unique
+  description String?
+  type        String    @default("percent")
+  value       Decimal   @db.Decimal(10, 2)
+  minAmount   Decimal   @default(0) @db.Decimal(10, 2)
+  maxDiscount Decimal?  @db.Decimal(10, 2)
+  usageLimit  Int?
+  used        Int       @default(0)
+  expiresAt   DateTime?
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([code])
+  @@index([isActive])
+}
+
+model StoreSettings {
+  id               String   @id @default(cuid())
+  companyName      String?
+  storeEmail       String?
+  currency         String   @default("USD")
+  taxRate          Float    @default(0)
+  baseCity         String?
+  taxiLicense      String?
+  googleMapsApiKey String?
+  tiktokUrl        String?
+  facebookUrl      String?
+  instagramUrl     String?
+  heroTitle        String?
+  heroSubtitle     String?
+  heroButtonText   String?
+  heroImageUrl     String?
+  ctaTitle         String?
+  ctaSubtitle      String?
+  ctaButtonText    String?
+  footerCopyright  String?
+  faviconUrl       String?
+  ogImageUrl       String?
+  siteLang         String?  @default("en")
+  phoneNumber      String?
+  whatsappNumber   String?
+  workingHours     String?
+  serviceArea      String?
+  fleetSize        Int?
+  logoUrl          String?
+  mapCountryCode   String?  @default("cy")
+  mapCenterLat     Float?   @default(34.9175)
+  mapCenterLng     Float?   @default(33.6290)
+  mapDefaultZoom   Int?     @default(10)
+  enableCardPayment Boolean  @default(true)
+  enableCashPayment Boolean  @default(true)
+  familyTitle      String?  @default("A Family Tradition of Excellence")
+  familyText       String?  @default("We are a family-owned business, time-tested and passed down through generations. Our commitment to reliability, safety, and personal service is deeply rooted in our family values. When you ride with us, you're not just a passenger; you're treated like family.")
+  featuresTitle    String?  @default("Why Choose Us")
+  featuresSubtitle String?  @default("Experience the difference with our premium service")
+  feature1Title    String?  @default("Professional Drivers")
+  feature1Text     String?  @default("Our team consists of fully licensed, highly experienced, and courteous drivers who prioritize your safety and comfort above all else. They know the island inside out.")
+  feature2Title    String?  @default("Fixed Prices")
+  feature2Text     String?  @default("Enjoy complete transparency with our fixed pricing model. The price you see is the price you pay, with absolutely no hidden fees, surcharges, or unexpected costs.")
+  feature3Title    String?  @default("24/7 Availability")
+  feature3Text     String?  @default("We are at your service around the clock, 365 days a year. Whether you have an early morning flight or a late-night arrival, you can count on us to be there on time.")
+  feature4Title    String?  @default("Luxury Vehicles")
+  feature4Text     String?  @default("Travel in style and comfort with our fleet of modern, meticulously maintained, and clean vehicles. We offer a premium travel experience that meets the highest standards.")
+  
+  // Services section
+  servicesTitle    String?  @default("Our Services")
+  servicesSubtitle String?  @default("Professional transfers tailored to your needs")
+  service1Title    String?  @default("Airport Transfers")
+  service1Text     String?  @default("Seamless pickups and drop-offs at the airport. We track your flight to ensure we're there when you land.")
+  service2Title    String?  @default("City Rides")
+  service2Text     String?  @default("Comfortable travel within the city. Whether it's for business, shopping, or dining, we get you there in style.")
+  service3Title    String?  @default("Hourly Service")
+  service3Text     String?  @default("Need a car for a few hours? Book our hourly service for flexible travel with a dedicated driver at your disposal.")
+
+  // Stats Bar
+  statsBar1Value   String?  @default("1,200+")
+  statsBar1Label   String?  @default("Trips Completed")
+  statsBar2Value   String?  @default("950+")
+  statsBar2Label   String?  @default("Happy Clients")
+  statsBar3Value   String?  @default("5+")
+  statsBar3Label   String?  @default("Years of Service")
+  statsBar4Value   String?  @default("4.9 ★")
+  statsBar4Label   String?  @default("Rating")
+
+  airportSurcharge  Float   @default(5)
+  luggageFee        Float   @default(5)
+  childSeatFee      Float   @default(5)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+model ContentPage {
+  id        String   @id @default(cuid())
+  slug      String   @unique
+  title     String
+  content   String   @db.Text
+  isVisible Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model FaqItem {
+  id        String   @id @default(cuid())
+  question  String
+  answer    String   @db.Text
+  category  String?  @default("General")
+  sortOrder Int      @default(0)
+  isVisible Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isVisible])
+  @@index([sortOrder])
+}
+
+model TaxiReview {
+  id          String   @id @default(cuid())
+  authorName  String
+  authorImage String?
+  rating      Int      @default(5)
+  content     String   @db.Text
+  tripType    String?
+  isApproved  Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([isApproved])
+}
+
+model Vehicle {
+  id              String   @id @default(cuid())
+  make            String
+  model           String
+  year            Int?
+  licensePlate    String   @unique
+  color           String?
+  type            String?
+  capacity        Int      @default(4)
+  luggageCapacity Int      @default(2)
+  image           String?
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  trips           Trip[]
+}
+
+model Driver {
+  id          String   @id @default(cuid())
+  name        String
+  phone       String?
+  email       String?
+  photoUrl    String?
+  licenseNumber String?
+  isActive    Boolean  @default(true)
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  trips Trip[]
+
+  @@index([isActive])
+}
