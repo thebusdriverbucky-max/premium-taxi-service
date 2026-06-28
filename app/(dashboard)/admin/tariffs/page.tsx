@@ -11,6 +11,7 @@ import { Select } from "@/components/ui/Select";
 import { Plus, Upload, Image as ImageIcon, X, Trash2 } from "lucide-react";
 import TariffsTable from "@/components/admin/TariffsTable";
 import { CldUploadWidget } from "next-cloudinary";
+import { TariffZone } from "@/types/tariff";
 
 interface TariffPlan {
   id: string;
@@ -22,7 +23,7 @@ interface TariffPlan {
   pricePerKm: number | string;
   pricePerMin: number | string;
   minPrice?: number | string;
-  zones?: any;
+  zones?: TariffZone[] | string | null;
   currency: string;
   maxPassengers: number;
   maxLuggage: number;
@@ -49,7 +50,7 @@ export default function AdminTariffsPage() {
     pricePerKm: "",
     pricePerMin: "0",
     minPrice: "0",
-    zones: [] as any[],
+    zones: [] as TariffZone[],
     currency: "EUR",
     maxPassengers: "4",
     maxLuggage: "2",
@@ -167,9 +168,9 @@ export default function AdminTariffsPage() {
     setFormData({ ...formData, zones: newZones });
   };
 
-  const updateZone = (index: number, field: string, value: any) => {
+  const updateZone = (index: number, field: keyof TariffZone, value: string | number) => {
     const newZones = [...formData.zones];
-    newZones[index] = { ...newZones[index], [field]: value };
+    newZones[index] = { ...newZones[index], [field]: value } as TariffZone;
     setFormData({ ...formData, zones: newZones });
   };
 
@@ -356,7 +357,7 @@ export default function AdminTariffsPage() {
               </div>
             ) : (
               <div className="space-y-3">
-                {formData.zones.map((zone: any, index: number) => (
+                {formData.zones.map((zone, index) => (
                   <div key={index} className="p-3 bg-white/5 rounded-xl border border-white/10 relative group">
                     <button
                       type="button"

@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/Input";
 import LocationAutocomplete from "@/components/location-autocomplete";
 import BookingMap from "@/components/booking-map";
 import { TariffPlan } from "@prisma/client";
+import { TariffZone } from "@/types/tariff";
 import { ChevronDown, ArrowRight, Info } from "lucide-react";
 import { useSettings } from "@/components/providers/settings-provider";
 
@@ -250,18 +251,22 @@ export default function BookingPage() {
     }
 
     // Apply tariff minimum price
-    const tariffMinPrice = Number((selectedTariff as any)?.minPrice ?? 0);
+    const tariffMinPrice = selectedTariff ? Number(selectedTariff.minPrice) : 0;
     let finalPrice = Math.max(Math.round(calculatedPrice), MIN_PRICE, tariffMinPrice);
 
     // Check zone-based minimum price
-    if ((selectedTariff as any)?.zones && distanceKm) {
+    if (selectedTariff?.zones && distanceKm) {
       try {
-        const zones = typeof (selectedTariff as any).zones === 'string'
-          ? JSON.parse((selectedTariff as any).zones)
-          : (selectedTariff as any).zones;
+        const zonesJson = selectedTariff.zones;
+        let zones: TariffZone[] = [];
+        if (typeof zonesJson === 'string') {
+          zones = JSON.parse(zonesJson) as TariffZone[];
+        } else if (Array.isArray(zonesJson)) {
+          zones = zonesJson as unknown as TariffZone[];
+        }
 
         if (Array.isArray(zones)) {
-          const activeZone = zones.find((z: any) => distanceKm >= z.minKm && distanceKm < z.maxKm);
+          const activeZone = zones.find((z) => distanceKm >= z.minKm && distanceKm < z.maxKm);
           if (activeZone?.minPrice) {
             finalPrice = Math.max(finalPrice, Number(activeZone.minPrice));
           }

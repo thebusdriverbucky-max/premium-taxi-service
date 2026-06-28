@@ -110,7 +110,7 @@ export async function POST(request: NextRequest) {
     // We use tariffPlan.basePrice + pricePerKm * distance as floor
     const clientSentBasePrice = Number(validatedData.items?.[0]?.price ?? 0);
     const tariffBase = Number(tariffPlan.basePrice);
-    const minPrice = Number((tariffPlan as any).minPrice ?? 0);
+    const minPrice = Number(tariffPlan.minPrice ?? 0);
 
     // Use max of: client-calculated price vs tariff base price
     // This prevents underpricing but allows legitimate calculation
