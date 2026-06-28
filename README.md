@@ -23,3 +23,20 @@ The platform is optimized for growth from day one: automated SEO generation and 
 - 📩 **Email:** Resend - automated booking confirmations for customers and admins
 - 🚀 **Performance:** Rate limiting via Redis and built-in SEO optimization
 - ☁️ **Deployment:** Fully optimized for Vercel and serverless environments
+
+## Getting Started
+
+To set up, run, and deploy this project, please refer to our official guides:
+
+1. **First-Step Guide (Start Here):**  
+   [https://www.ownyourwebsite.app/help](https://www.ownyourwebsite.app/help) — Read this first to quickly understand how the template works and get it running.
+
+2. **Deployment Guide:**  
+   [https://www.ownyourwebsite.app/docs/deploy](https://www.ownyourwebsite.app/docs/deploy) — Step-by-step instructions on deploying your website to production.
+
+3. **Environment Variables Config:**  
+   [https://www.ownyourwebsite.app/docs/env](https://www.ownyourwebsite.app/docs/env) — Information on which environment variables are required and how to obtain them.
+
+## License Configuration
+
+All configuration values (including `LICENSE_KEY`, `LICENSE_PRODUCT`, or any other license-related keys) will be sent directly to your email address immediately after purchase. Simply paste them into your environment variables when configuring the project!
