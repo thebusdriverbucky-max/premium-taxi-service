@@ -7,7 +7,7 @@ export default function TermsOfService() {
           <p className="text-gray-300">Last updated: {new Date().toLocaleDateString('en-GB')}</p>
 
           <h2>1. Acceptance of Terms</h2>
-          <p>By accessing and using [Company Name]'s taxi service, you agree to be bound by these Terms of Service.</p>
+          <p>By accessing and using [Company Name]’s taxi service, you agree to be bound by these Terms of Service.</p>
 
           <h2>2. Use of Service</h2>
           <p>You must be at least 18 years old to use our service. You agree to provide accurate information when booking a ride and to comply with all applicable laws.</p>

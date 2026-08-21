@@ -118,7 +118,7 @@ export default function LoginContent() {
 
       <div className="mt-8 text-center">
         <p className="text-gray-400 text-sm">
-          Don't have an account?{" "}
+          Don’t have an account?{" "}
           <Link href="/register" className="text-taxi-gold hover:text-taxi-gold-light font-semibold transition-colors">
             Create one
           </Link>

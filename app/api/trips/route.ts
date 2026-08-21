@@ -164,7 +164,7 @@ export async function POST(request: NextRequest) {
       tripNumber = await generateOrderNumber(); // We can reuse this or create a new one
       console.log("🔢 Generated trip number:", tripNumber);
     } catch (err) {
-      tripNumber = `TRP-${Math.random().toString(36).substr(2, 9).toUpperCase()}`;
+      tripNumber = `TRP-${Math.random().toString(36).slice(2, 11).toUpperCase()}`;
       console.warn("⚠️ Failed to generate trip number, using fallback:", tripNumber);
     }
 
@@ -201,15 +201,8 @@ export async function POST(request: NextRequest) {
     });
     console.log("✅ Trip created:", trip.id);
 
-    // Increment coupon usage if couponCode was used
-    if (couponCode) {
-      try {
-        await db.coupon.updateMany({
-          where: { code: couponCode.toUpperCase() },
-          data: { used: { increment: 1 } },
-        });
-      } catch { /* non-critical */ }
-    }
+    // NOTE: usage of DiscountCode is tracked via the trips relation
+    // (discountCodeId on Trip). The legacy Coupon model is not used here.
 
     // Send emails only if payment is CASH. For CARD, emails are sent via Stripe webhook after successful payment
     if (paymentMethod === "CASH") {

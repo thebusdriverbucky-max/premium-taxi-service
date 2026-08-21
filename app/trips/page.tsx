@@ -21,7 +21,7 @@ export default async function MyTripsPage() {
 
         {trips.length === 0 ? (
           <div className="bg-white/5 border border-white/10 rounded-xl p-8 text-center">
-            <p className="text-gray-400 mb-6">You haven't booked any trips yet.</p>
+            <p className="text-gray-400 mb-6">You haven’t booked any trips yet.</p>
             <Link
               href="/booking"
               className="inline-block bg-taxi-gold-gradient text-taxi-dark-navy font-bold px-6 py-3 rounded-lg hover:opacity-90 transition-opacity"

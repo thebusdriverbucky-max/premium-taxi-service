@@ -17,7 +17,10 @@ async function handleTripCancellation(tripId: string) {
     where: { id: tripId },
   });
 
-  if (!trip || trip.status === "CANCELLED") return;
+  // Only cancel trips that are still awaiting payment.
+  // A late payment_failed / session.expired event must never cancel
+  // a trip that has already been confirmed (or otherwise progressed).
+  if (!trip || trip.status !== "PENDING" || trip.paymentStatus === "paid") return;
 
   await db.trip.update({
     where: { id: tripId },

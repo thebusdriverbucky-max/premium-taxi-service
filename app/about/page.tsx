@@ -13,7 +13,7 @@ export default function AboutPage() {
             </p>
             <p className="text-gray-300 leading-relaxed">
               What started as a small project has grown into a thriving transportation network serving thousands of passengers.
-              We're committed to continuous improvement and innovation in urban mobility.
+              We’re committed to continuous improvement and innovation in urban mobility.
             </p>
           </section>
 
@@ -77,7 +77,7 @@ export default function AboutPage() {
           <section className="bg-taxi-gold/5 rounded-2xl p-8 border border-taxi-gold/20 text-center">
             <h2 className="text-2xl font-semibold mb-4 text-taxi-gold">Get In Touch</h2>
             <p className="text-gray-300 mb-8 max-w-lg mx-auto">
-              Have questions about our company? We'd love to hear from you!
+              Have questions about our company? We’d love to hear from you!
             </p>
             <a
               href="/contact"

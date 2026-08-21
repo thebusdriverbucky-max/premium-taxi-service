@@ -64,7 +64,7 @@ export function ReviewCard({ review }: ReviewCardProps) {
         </div>
 
         <p className="text-gray-300 italic leading-relaxed flex-grow relative z-10 line-clamp-3 min-h-[4.5rem]">
-          "{review.content}"
+          “{review.content}”
         </p>
 
         <div className="mt-8 pt-6 border-t border-white/5 text-gray-500 text-xs font-medium">

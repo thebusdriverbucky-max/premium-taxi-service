@@ -283,7 +283,7 @@ export default function TripDetailsPage({
               <Info className="w-4 h-4 mr-2" />
               Notes
             </h2>
-            <p className="text-sm italic text-gray-300">"{trip.notes}"</p>
+            <p className="text-sm italic text-gray-300">“{trip.notes}”</p>
           </div>
         )}
 
