@@ -14,6 +14,16 @@ interface RoutesApiResponse {
   }>;
 }
 
+interface RoutesApiErrorResponse {
+  error?: {
+    message?: string;
+    status?: string;
+    details?: Array<{
+      reason?: string;
+    }>;
+  };
+}
+
 export interface ComputedRoute {
   distanceMeters: number;
   durationSeconds: number;
@@ -86,8 +96,17 @@ export async function computeDrivingRoute(
   }
 
   if (!response.ok) {
+    let providerMessage = "";
+    try {
+      const data = await response.json() as RoutesApiErrorResponse;
+      const reason = data.error?.details?.find(detail => detail.reason)?.reason;
+      providerMessage = [data.error?.message, reason].filter(Boolean).join(" ");
+    } catch {
+      // Preserve the HTTP status if Google returned a non-JSON response.
+    }
+
     throw new RouteCalculationError(
-      `Google Routes API request failed with status ${response.status}`,
+      `Google Routes API request failed with status ${response.status}${providerMessage ? `: ${providerMessage}` : ""}`,
     );
   }
 
