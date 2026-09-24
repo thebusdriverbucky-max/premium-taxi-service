@@ -214,8 +214,28 @@ export default function BookingPage() {
     if (savedData) {
       try {
         const parsed = JSON.parse(savedData);
-        if (parsed.pickup) setPickup(parsed.pickup);
-        if (parsed.dropoff) setDropoff(parsed.dropoff);
+        if (parsed.pickup) {
+          setPickup(parsed.pickup);
+          if (Number.isFinite(parsed.pickupCoords?.lat) && Number.isFinite(parsed.pickupCoords?.lng)) {
+            setPickupLocation({
+              address: parsed.pickup,
+              latitude: parsed.pickupCoords.lat,
+              longitude: parsed.pickupCoords.lng,
+              placeId: parsed.pickupCoords.placeId,
+            });
+          }
+        }
+        if (parsed.dropoff) {
+          setDropoff(parsed.dropoff);
+          if (Number.isFinite(parsed.dropoffCoords?.lat) && Number.isFinite(parsed.dropoffCoords?.lng)) {
+            setDropoffLocation({
+              address: parsed.dropoff,
+              latitude: parsed.dropoffCoords.lat,
+              longitude: parsed.dropoffCoords.lng,
+              placeId: parsed.dropoffCoords.placeId,
+            });
+          }
+        }
         if (parsed.date) {
           const d = new Date(parsed.date);
           setDate(d.toISOString().split('T')[0]);

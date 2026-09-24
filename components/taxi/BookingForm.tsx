@@ -12,9 +12,9 @@ import { useSettings } from "@/components/providers/settings-provider";
 
 const bookingSchema = z.object({
   pickup: z.string().min(2, "Pickup location is required"),
-  pickupCoords: z.object({ lat: z.number().optional(), lng: z.number().optional() }).optional(),
+  pickupCoords: z.object({ lat: z.number(), lng: z.number(), placeId: z.string().optional() }),
   dropoff: z.string().min(2, "Dropoff location is required"),
-  dropoffCoords: z.object({ lat: z.number().optional(), lng: z.number().optional() }).optional(),
+  dropoffCoords: z.object({ lat: z.number(), lng: z.number(), placeId: z.string().optional() }),
   date: z.string().refine((val) => new Date(val) > new Date(), "Date must be in the future"),
   phone: z.string().min(8, "Valid phone number is required"),
 });
@@ -39,9 +39,9 @@ export function BookingForm() {
   const onSubmit = (data: BookingFormData) => {
     const bookingData = {
       pickup: data.pickup,
-      pickupCoords: data.pickupCoords || { lat: 0, lng: 0 },
+      pickupCoords: data.pickupCoords,
       dropoff: data.dropoff,
-      dropoffCoords: data.dropoffCoords || { lat: 0, lng: 0 },
+      dropoffCoords: data.dropoffCoords,
       date: data.date,
       time: new Date(data.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }),
       phone: data.phone
@@ -73,10 +73,12 @@ export function BookingForm() {
                       value={value}
                       pinned={true}
                       mapCountryCode={mapCountryCode}
-                      onChange={(address, lat, lng) => {
+                      onChange={(address, lat, lng, placeId) => {
                         onChange(address);
                         if (lat !== undefined && lng !== undefined) {
-                          setValue("pickupCoords", { lat, lng });
+                          setValue("pickupCoords", { lat, lng, placeId }, { shouldValidate: true });
+                        } else {
+                          setValue("pickupCoords", undefined as never, { shouldValidate: true });
                         }
                       }}
                       error={errors.pickup?.message}
@@ -96,10 +98,12 @@ export function BookingForm() {
                       placeholder="e.g. Hotel"
                       value={value}
                       mapCountryCode={mapCountryCode}
-                      onChange={(address, lat, lng) => {
+                      onChange={(address, lat, lng, placeId) => {
                         onChange(address);
                         if (lat !== undefined && lng !== undefined) {
-                          setValue("dropoffCoords", { lat, lng });
+                          setValue("dropoffCoords", { lat, lng, placeId }, { shouldValidate: true });
+                        } else {
+                          setValue("dropoffCoords", undefined as never, { shouldValidate: true });
                         }
                       }}
                       error={errors.dropoff?.message}
