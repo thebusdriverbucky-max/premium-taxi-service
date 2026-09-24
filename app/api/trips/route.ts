@@ -53,7 +53,13 @@ export async function POST(request: NextRequest) {
     }
 
     const session = await auth();
-    const userId = session?.user?.id;
+    const sessionUserId = session?.user?.id;
+    // JWT sessions can outlive a deleted/reseeded database user. Treat such a
+    // stale session as a guest booking instead of violating Trip.userId FK.
+    const userId = sessionUserId && await db.user.findUnique({
+      where: { id: sessionUserId },
+      select: { id: true },
+    }).then(user => user?.id ?? null);
 
     const body = await request.json();
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.NEXTAUTH_URL;
