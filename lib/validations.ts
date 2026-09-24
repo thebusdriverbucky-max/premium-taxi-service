@@ -82,7 +82,10 @@ export const bookingRoutePointSchema = z.object({
 
 export const bookingPassengerSchema = z.object({
   name: z.string().trim().min(2).max(120),
-  email: z.string().trim().email().max(254).transform(value => value.toLowerCase()),
+  email: z.preprocess(
+    value => typeof value === "string" && value.trim() === "" ? undefined : value,
+    z.string().trim().email().max(254).transform(value => value.toLowerCase()).optional(),
+  ),
   phone: z.string()
     .trim()
     .min(5)

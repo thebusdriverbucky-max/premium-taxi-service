@@ -179,7 +179,7 @@ export async function POST(request: NextRequest) {
         bookingRequestId: validatedData.bookingRequestId,
         userId,
         passengerName: passenger.name,
-        passengerEmail: passenger.email,
+        passengerEmail: passenger.email || null,
         passengerPhone: passenger.phone,
         pickupAddress: pickup.address,
         dropoffAddress: dropoff.address,

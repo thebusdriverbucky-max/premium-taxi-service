@@ -36,7 +36,7 @@ const nextConfig = {
       default-src 'self';
       script-src 'self' 'unsafe-eval' 'unsafe-inline' https://js.stripe.com https://maps.googleapis.com;
       style-src 'self' 'unsafe-inline';
-      img-src 'self' blob: data: https://res.cloudinary.com https://source.unsplash.com https://images.unsplash.com https://i.imgur.com;
+      img-src 'self' blob: data: https://res.cloudinary.com https://source.unsplash.com https://images.unsplash.com https://i.imgur.com https://maps.googleapis.com https://maps.gstatic.com *.googleapis.com *.gstatic.com;
       font-src 'self' data:;
       object-src 'none';
       base-uri 'self';

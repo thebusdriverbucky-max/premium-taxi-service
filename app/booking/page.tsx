@@ -311,7 +311,7 @@ export default function BookingPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!name || !email || !phone || !pickup || !dropoff || !date || !time || !selectedTariffId) {
+    if (!name || !phone || !pickup || !dropoff || !date || !time || !selectedTariffId) {
       toast.error("Please fill in all required fields");
       return;
     }
