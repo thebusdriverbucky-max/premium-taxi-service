@@ -1,10 +1,10 @@
 "use client";
 
 import React, { createContext, useContext, ReactNode } from "react";
-import { StoreSettingsData } from "@/app/actions/settings";
+import type { PublicStoreSettings } from "@/lib/public-settings";
 
 interface SettingsContextType {
-  settings: StoreSettingsData | null;
+  settings: PublicStoreSettings | null;
   currency: string;
 }
 
@@ -15,7 +15,7 @@ export function SettingsProvider({
   initialSettings,
 }: {
   children: ReactNode;
-  initialSettings: StoreSettingsData | null;
+  initialSettings: PublicStoreSettings | null;
 }) {
   const currency = initialSettings?.currency || "USD";
 

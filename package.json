@@ -4,12 +4,14 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "prisma generate && prisma migrate deploy && next build",
+    "build": "prisma generate && next build",
     "start": "next start",
     "lint": "next lint",
+    "test:pricing": "tsx --test lib/pricing.test.ts",
     "db:push": "prisma db push",
     "db:seed": "tsx prisma/seed.ts",
     "db:migrate": "prisma migrate dev",
+    "db:migrate:deploy": "prisma migrate deploy",
     "stripe:listen": "stripe listen --forward-to localhost:3000/api/stripe/webhooks",
     "postinstall": "prisma generate",
     "prisma:studio": "prisma studio"

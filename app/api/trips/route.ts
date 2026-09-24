@@ -3,10 +3,43 @@ import { checkRateLimit } from "@/lib/rate-limit";
 import { db } from "@/lib/db";
 import { stripe } from "@/lib/stripe";
 import { NextRequest, NextResponse } from "next/server";
-import { createOrderSchema } from "@/lib/validations";
+import { createBookingSchema } from "@/lib/validations";
 import { generateOrderNumber } from "@/lib/order-number";
 import { z } from "zod";
 import { sendBookingEmails } from "@/lib/email";
+import type { Prisma } from "@prisma/client";
+import { computeDrivingRoute, RouteCalculationError } from "@/lib/google-routes";
+import {
+  calculatePrice,
+  decimalToMinor,
+  minorToDecimal,
+  PricingError,
+  type PricingDiscount,
+  type PricingZone,
+} from "@/lib/pricing";
+
+function parseZones(value: unknown): PricingZone[] {
+  if (!Array.isArray(value)) return [];
+
+  return value.flatMap((zone, index) => {
+    if (!zone || typeof zone !== "object") return [];
+    const candidate = zone as Record<string, unknown>;
+    const minKm = Number(candidate.minKm);
+    const maxKm = Number(candidate.maxKm);
+    const minimum = candidate.minPrice;
+
+    if (!Number.isFinite(minKm) || !Number.isFinite(maxKm) || minimum === undefined) {
+      throw new PricingError(`Tariff zone ${index} is invalid`);
+    }
+
+    return [{
+      name: String(candidate.name || `Zone ${index + 1}`),
+      minDistanceMeters: Math.round(minKm * 1_000),
+      maxDistanceMeters: Math.round(maxKm * 1_000),
+      minimumMinor: decimalToMinor(String(minimum), `zones[${index}].minPrice`),
+    }];
+  });
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -23,17 +56,15 @@ export async function POST(request: NextRequest) {
     const userId = session?.user?.id;
 
     const body = await request.json();
-    console.log("📦 Received trip request body:", JSON.stringify(body, null, 2));
-
-    // Base URL for redirects
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.NEXTAUTH_URL || `https://${request.headers.get("host")}`;
-    console.log("🌐 Base URL:", baseUrl);
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.NEXTAUTH_URL;
+    if (!baseUrl) {
+      return NextResponse.json({ error: "Application URL is not configured" }, { status: 503 });
+    }
 
     // Zod Validation
     let validatedData;
     try {
-      validatedData = createOrderSchema.parse(body);
-      console.log("✅ Validation successful:", JSON.stringify(validatedData, null, 2));
+      validatedData = createBookingSchema.parse(body);
     } catch (error) {
       if (error instanceof z.ZodError) {
         console.error("❌ Validation failed:", error.issues);
@@ -42,121 +73,93 @@ export async function POST(request: NextRequest) {
       throw error;
     }
 
-    const {
-      items,
-      guestEmail,
-      pickupAddress,
-      dropoffAddress,
-      pickupDateTime,
-      passengerCount,
-      flightNumber,
-      notes,
-      couponCode,
-      paymentMethod
-    } = validatedData;
-
-    if (!userId && !guestEmail) {
-      console.error("❌ Missing userId and guestEmail");
-      return NextResponse.json({ error: "Email is required for guest checkout" }, { status: 400 });
+    const { tariffPlanId, pickup, dropoff, passenger, extras, paymentMethod } = validatedData;
+    const existingTrip = await db.trip.findUnique({
+      where: { bookingRequestId: validatedData.bookingRequestId },
+      select: { id: true, stripeCheckoutSessionId: true, paymentMethod: true },
+    });
+    if (existingTrip) {
+      if (existingTrip.paymentMethod === "CASH") {
+        return NextResponse.json({ success: true, tripId: existingTrip.id, url: `${baseUrl}/trips/${existingTrip.id}?success=true` });
+      }
+      if (existingTrip.stripeCheckoutSessionId) {
+        const existingSession = await stripe.checkout.sessions.retrieve(existingTrip.stripeCheckoutSessionId);
+        return NextResponse.json({ tripId: existingTrip.id, url: existingSession.url });
+      }
+      return NextResponse.json({ error: "Booking is already being processed" }, { status: 409 });
     }
-
-    // Assume the first item's productId is the tariffPlanId
-    const tariffPlanId = items[0]?.productId;
-    console.log("🔍 Looking for tariff plan:", tariffPlanId);
     const tariffPlan = await db.tariffPlan.findUnique({
-      where: { id: tariffPlanId },
+      where: { id: tariffPlanId, isActive: true },
     });
 
     if (!tariffPlan) {
       console.error("❌ Tariff plan not found:", tariffPlanId);
       return NextResponse.json({ error: "Tariff plan not found" }, { status: 400 });
     }
-    console.log("✅ Tariff plan found:", tariffPlan.name);
-
     const currency = tariffPlan.currency || "EUR";
+    const [storeSettings, route] = await Promise.all([
+      db.storeSettings.findFirst({
+        select: {
+          airportSurcharge: true,
+          luggageFee: true,
+          childSeatFee: true,
+          storeEmail: true,
+          companyName: true,
+          enableCardPayment: true,
+          enableCashPayment: true,
+        },
+      }),
+      computeDrivingRoute(pickup, dropoff),
+    ]);
 
-    // ── SERVER-SIDE PRICE CALCULATION ──────────────────────────────
-    // Get store settings for surcharges
-    const storeSettings = await db.storeSettings.findFirst();
-    const airportSurcharge = Number(storeSettings?.airportSurcharge ?? 5);
-    const luggageFee = Number(storeSettings?.luggageFee ?? 5);
-    const childSeatFee = Number(storeSettings?.childSeatFee ?? 5);
-
-    // Parse client-sent extras from notes (to know what was selected)
-    // Notes format: "[EXTRAS: ADD_LUGGAGE:1:Large, CHILD_SEAT:1]\nNotes for driver: ..."
-    const notesStr = validatedData.notes || "";
-    const extrasMatch = notesStr.match(/\[EXTRAS:\s*([^\]]+)\]/);
-    let hasAirport = false;
-    let luggageCount = 0;
-    let childSeatCount = 0;
-
-    if (extrasMatch) {
-      extrasMatch[1].split(',').map((s: string) => s.trim()).forEach((extra: string) => {
-        if (extra.startsWith('ADD_LUGGAGE')) {
-          luggageCount += parseInt(extra.split(':')?.[1] || '1', 10);
-        } else if (extra.startsWith('CHILD_SEAT')) {
-          childSeatCount += parseInt(extra.split(':')?.[1] || '1', 10);
-        }
-      });
+    if (
+      (paymentMethod === "STRIPE" && storeSettings?.enableCardPayment === false)
+      || (paymentMethod === "CASH" && storeSettings?.enableCashPayment === false)
+    ) {
+      return NextResponse.json({ error: "Selected payment method is not available" }, { status: 400 });
     }
 
-    // Detect airport from pickup/dropoff address
-    const pickupStr = (validatedData.pickupAddress || '').toLowerCase();
-    const dropoffStr = (validatedData.dropoffAddress || '').toLowerCase();
-    hasAirport = /airport/.test(pickupStr) || /airport/.test(dropoffStr);
-
-    // Calculate distance-based price
-    // Client sends distance via items.price as the calculated base price
-    // We use tariffPlan.basePrice + pricePerKm * distance as floor
-    const clientSentBasePrice = Number(validatedData.items?.[0]?.price ?? 0);
-    const tariffBase = Number(tariffPlan.basePrice);
-    const minPrice = Number(tariffPlan.minPrice ?? 0);
-
-    // Use max of: client-calculated price vs tariff base price
-    // This prevents underpricing but allows legitimate calculation
-    const tripBasePrice = Math.max(clientSentBasePrice, tariffBase);
-    const finalBasePrice = minPrice > 0 ? Math.max(tripBasePrice, minPrice) : tripBasePrice;
-
-    // Add extras
-    const extrasTotal =
-      (hasAirport ? airportSurcharge : 0) +
-      (luggageCount * luggageFee) +
-      (childSeatCount * childSeatFee);
-
-    let total = Number((finalBasePrice + extrasTotal).toFixed(2));
-    const computedBasePrice = total;
-    // ── END SERVER-SIDE PRICE CALCULATION ──────────────────────────
-
-    console.log("💰 Server-calculated price:", {
-      tariffBase,
-      clientSentBasePrice,
-      finalBasePrice,
-      extrasTotal,
-      total,
-    });
-    let discountAmount = 0;
-    let discountCodeId = null;
+    let discount: PricingDiscount | undefined;
+    let discountCodeId: string | null = null;
 
     // Validate Coupon if provided
-    if (couponCode) {
-      console.log("🎟️ Validating coupon:", couponCode);
+    if (validatedData.couponCode) {
       const coupon = await db.discountCode.findUnique({
-        where: { code: couponCode.toUpperCase() },
+        where: { code: validatedData.couponCode },
       });
 
-      if (coupon && coupon.isActive && (!coupon.expiresAt || new Date() < coupon.expiresAt)) {
-        console.log("✅ Coupon valid:", coupon.code);
-        discountCodeId = coupon.id;
-        if (coupon.type === "FIXED") {
-          discountAmount = coupon.value;
-        } else if (coupon.type === "PERCENT") {
-          discountAmount = (total * coupon.value) / 100;
-        }
-        total = Math.max(0, total - discountAmount);
-      } else {
-        console.warn("⚠️ Coupon invalid or expired:", couponCode);
+      if (!coupon || !coupon.isActive || (coupon.expiresAt && new Date() >= coupon.expiresAt)) {
+        return NextResponse.json({ error: "Coupon is invalid or expired" }, { status: 400 });
       }
+
+      discountCodeId = coupon.id;
+      discount = coupon.type === "FIXED"
+        ? { type: "FIXED", amountMinor: decimalToMinor(String(coupon.value), "coupon.value") }
+        : { type: "PERCENT", basisPoints: Math.round(coupon.value * 100) };
     }
+
+    const luggageQuantity = extras.luggage?.quantity ?? 0;
+    const childSeatQuantity = extras.childSeats?.quantity ?? 0;
+    const pricing = calculatePrice({
+      distanceMeters: route.distanceMeters,
+      durationSeconds: route.durationSeconds,
+      baseFareMinor: decimalToMinor(String(tariffPlan.basePrice), "basePrice"),
+      pricePerKmMinor: decimalToMinor(String(tariffPlan.pricePerKm), "pricePerKm"),
+      pricePerMinuteMinor: decimalToMinor(String(tariffPlan.pricePerMin), "pricePerMin"),
+      minimumFareMinor: decimalToMinor(String(tariffPlan.minPrice), "minPrice"),
+      zones: parseZones(tariffPlan.zones),
+      includesAirport: /airport/i.test(`${pickup.address} ${dropoff.address}`),
+      airportSurchargeMinor: decimalToMinor(String(storeSettings?.airportSurcharge ?? 5), "airportSurcharge"),
+      luggageFeeMinor: decimalToMinor(String(storeSettings?.luggageFee ?? 5), "luggageFee"),
+      luggageQuantity,
+      childSeatFeeMinor: decimalToMinor(String(storeSettings?.childSeatFee ?? 5), "childSeatFee"),
+      childSeatQuantity,
+      discount,
+    });
+
+    const total = minorToDecimal(pricing.totalMinor);
+    const computedBasePrice = minorToDecimal(pricing.subtotalMinor);
+    const discountAmount = minorToDecimal(pricing.discountMinor);
 
     // Generate trip number
     let tripNumber;
@@ -173,27 +176,37 @@ export async function POST(request: NextRequest) {
     const trip = await db.trip.create({
       data: {
         tripNumber,
+        bookingRequestId: validatedData.bookingRequestId,
         userId,
-        passengerName: validatedData.shippingAddress
-          ? `${validatedData.shippingAddress.firstName} ${validatedData.shippingAddress.lastName}`.trim()
-          : undefined,
-        passengerEmail: guestEmail || session?.user?.email,
-        passengerPhone: validatedData.shippingAddress?.phone,
-        pickupAddress: pickupAddress || "N/A",
-        dropoffAddress: dropoffAddress || "N/A",
-        pickupDateTime: pickupDateTime ? new Date(pickupDateTime) : null,
-        scheduledAt: pickupDateTime ? new Date(pickupDateTime) : null,
-        passengerCount,
-        flightNumber,
-        notes,
+        passengerName: passenger.name,
+        passengerEmail: passenger.email,
+        passengerPhone: passenger.phone,
+        pickupAddress: pickup.address,
+        dropoffAddress: dropoff.address,
+        pickupPlaceId: pickup.placeId,
+        dropoffPlaceId: dropoff.placeId,
+        pickupLat: pickup.latitude,
+        pickupLng: pickup.longitude,
+        dropoffLat: dropoff.latitude,
+        dropoffLng: dropoff.longitude,
+        distance: route.distanceMeters / 1_000,
+        duration: Math.ceil(route.durationSeconds / 60),
+        pickupDateTime: new Date(validatedData.pickupDateTime),
+        scheduledAt: new Date(validatedData.pickupDateTime),
+        passengerCount: passenger.count,
+        flightNumber: validatedData.flightNumber,
+        notes: validatedData.notes,
+        extras,
         tariffPlanId,
         basePrice: computedBasePrice, // Original price before discount
         discountAmount,
         discountCodeId,
         total,
         currency,
+        pricingBreakdown: { ...pricing } as Prisma.InputJsonObject,
         status: "PENDING",
-        paymentStatus: "unpaid",
+        paymentMethod,
+        paymentStatus: paymentMethod === "CASH" ? "PENDING" : "UNPAID",
       },
       include: {
         tariffPlan: true,
@@ -225,7 +238,7 @@ export async function POST(request: NextRequest) {
           price: Number(trip.total),
           currency: trip.currency || undefined,
           paymentMethod: paymentMethod,
-          paymentStatus: trip.paymentStatus === 'paid' ? 'PAID' : 'PENDING',
+          paymentStatus: trip.paymentStatus === "PAID" ? "PAID" : "PENDING",
           flightNumber: trip.flightNumber || undefined,
           notes: trip.notes || undefined,
         }, adminEmail, companyName);
@@ -256,26 +269,30 @@ export async function POST(request: NextRequest) {
               currency: currency.toLowerCase(),
               product_data: {
                 name: `Taxi Trip: ${tariffPlan.name}`,
-                description: `${pickupAddress} to ${dropoffAddress}`,
+                description: `${pickup.address} to ${dropoff.address}`,
               },
-              unit_amount: Math.round(Number(total) * 100),
+              unit_amount: pricing.totalMinor,
             },
             quantity: 1,
           },
         ],
         mode: "payment",
+        client_reference_id: trip.id,
         success_url: `${baseUrl}/trips/${trip.id}?success=true&session_id={CHECKOUT_SESSION_ID}`,
         cancel_url: `${baseUrl}/booking?canceled=true`,
         metadata: {
           tripId: trip.id,
           orderId: trip.id, // Keep for backward compatibility with webhook
         },
-      });
+        payment_intent_data: {
+          metadata: { tripId: trip.id },
+        },
+      }, { idempotencyKey: `booking/${validatedData.bookingRequestId}` });
       console.log("✅ Stripe session created:", stripeSession.id);
 
       await db.trip.update({
         where: { id: trip.id },
-        data: { stripePaymentIntentId: stripeSession.id },
+        data: { stripeCheckoutSessionId: stripeSession.id },
       });
       console.log("✅ Trip updated with Stripe session ID");
 

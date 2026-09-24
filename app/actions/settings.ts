@@ -1,7 +1,9 @@
 'use server';
 
 import { db as prisma } from '@/lib/db';
+import { requireAdmin } from '@/lib/require-admin';
 import { revalidatePath } from 'next/cache';
+import { z } from 'zod';
 
 export interface StoreSettingsData {
   companyName?: string;
@@ -69,6 +71,33 @@ export interface StoreSettingsData {
   childSeatFee?: number;
 }
 
+const optionalText = (max: number) => z.string().trim().max(max).optional();
+
+const storeSettingsSchema = z.object({
+  companyName: optionalText(120), storeEmail: z.string().trim().email().max(254).optional(),
+  currency: z.string().trim().length(3).transform(value => value.toUpperCase()),
+  taxRate: z.number().finite().min(0).max(100), baseCity: optionalText(120), taxiLicense: optionalText(120),
+  tiktokUrl: optionalText(500), facebookUrl: optionalText(500), instagramUrl: optionalText(500),
+  heroTitle: optionalText(200), heroSubtitle: optionalText(500), heroButtonText: optionalText(100), heroImageUrl: optionalText(1000),
+  ctaTitle: optionalText(200), ctaSubtitle: optionalText(500), ctaButtonText: optionalText(100),
+  footerCopyright: optionalText(300), faviconUrl: optionalText(1000), ogImageUrl: optionalText(1000), siteLang: optionalText(10),
+  phoneNumber: optionalText(50), whatsappNumber: optionalText(50), workingHours: optionalText(200), serviceArea: optionalText(500),
+  fleetSize: z.number().int().min(0).max(100000).optional(), logoUrl: optionalText(1000), mapCountryCode: optionalText(10),
+  mapCenterLat: z.number().finite().min(-90).max(90).optional(), mapCenterLng: z.number().finite().min(-180).max(180).optional(),
+  mapDefaultZoom: z.number().int().min(1).max(22).optional(), enableCardPayment: z.boolean().optional(), enableCashPayment: z.boolean().optional(),
+  familyTitle: optionalText(200), familyText: optionalText(2000), featuresTitle: optionalText(200), featuresSubtitle: optionalText(500),
+  feature1Title: optionalText(200), feature1Text: optionalText(1000), feature2Title: optionalText(200), feature2Text: optionalText(1000),
+  feature3Title: optionalText(200), feature3Text: optionalText(1000), feature4Title: optionalText(200), feature4Text: optionalText(1000),
+  servicesTitle: optionalText(200), servicesSubtitle: optionalText(500), service1Title: optionalText(200), service1Text: optionalText(1000),
+  service2Title: optionalText(200), service2Text: optionalText(1000), service3Title: optionalText(200), service3Text: optionalText(1000),
+  statsBar1Value: optionalText(50), statsBar1Label: optionalText(100), statsBar2Value: optionalText(50), statsBar2Label: optionalText(100),
+  statsBar3Value: optionalText(50), statsBar3Label: optionalText(100), statsBar4Value: optionalText(50), statsBar4Label: optionalText(100),
+  airportSurcharge: z.number().finite().min(0).max(100000).optional(), luggageFee: z.number().finite().min(0).max(100000).optional(),
+  childSeatFee: z.number().finite().min(0).max(100000).optional(),
+}).strict().refine(data => data.enableCardPayment !== false || data.enableCashPayment !== false, {
+  message: 'At least one payment method must remain enabled',
+});
+
 export async function getSettings() {
   try {
     let settings = await prisma.storeSettings.findFirst();
@@ -90,8 +119,10 @@ export async function getSettings() {
 
 export async function updateSettings(data: StoreSettingsData) {
   try {
+    await requireAdmin();
+    const validated = storeSettingsSchema.parse(data);
     const settings = await prisma.storeSettings.findFirst();
-    const currencyChanged = settings?.currency !== data.currency;
+    const currencyChanged = settings?.currency !== validated.currency;
 
     await prisma.$transaction(async (tx) => {
       const updateData = {
@@ -157,8 +188,10 @@ export async function updateSettings(data: StoreSettingsData) {
         statsBar4Label: data.statsBar4Label,
         airportSurcharge: data.airportSurcharge,
         luggageFee: data.luggageFee,
-        childSeatFee: data.childSeatFee,
+        childSeatFee: validated.childSeatFee,
       };
+
+      Object.assign(updateData, validated);
 
       if (settings) {
         await tx.storeSettings.update({
@@ -175,7 +208,7 @@ export async function updateSettings(data: StoreSettingsData) {
       if (currencyChanged) {
         await tx.tariffPlan.updateMany({
           data: {
-            currency: data.currency,
+            currency: validated.currency,
           },
         });
       }
@@ -185,6 +218,6 @@ export async function updateSettings(data: StoreSettingsData) {
     return { success: true };
   } catch (error) {
     console.error('Error updating settings:', error);
-    return { success: false, error: 'Failed to update settings' };
+    return { success: false, error: error instanceof z.ZodError ? 'Invalid settings data' : 'Failed to update settings' };
   }
 }

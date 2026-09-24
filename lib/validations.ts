@@ -70,3 +70,58 @@ export const createOrderSchema = z.object({
   couponCode: z.string().optional(),
   paymentMethod: z.enum(["STRIPE", "CARD", "CASH"]).default("STRIPE"),
 });
+
+const coordinateSchema = z.number().finite();
+
+export const bookingRoutePointSchema = z.object({
+  address: z.string().trim().min(3).max(500),
+  placeId: z.string().trim().min(1).max(255).optional(),
+  latitude: coordinateSchema.min(-90).max(90),
+  longitude: coordinateSchema.min(-180).max(180),
+}).strict();
+
+export const bookingPassengerSchema = z.object({
+  name: z.string().trim().min(2).max(120),
+  email: z.string().trim().email().max(254).transform(value => value.toLowerCase()),
+  phone: z.string()
+    .trim()
+    .min(5)
+    .max(25)
+    .regex(/^\+?[\d\s\-()]{5,25}$/, "Invalid phone number format"),
+  count: z.number().int().min(1).max(50),
+}).strict();
+
+export const bookingExtrasSchema = z.object({
+  luggage: z.object({
+    quantity: z.number().int().min(1).max(20),
+    size: z.enum(["Standard", "Large"]),
+  }).strict().optional(),
+  childSeats: z.object({
+    quantity: z.number().int().min(1).max(10),
+  }).strict().optional(),
+}).strict();
+
+export const createBookingSchema = z.object({
+  bookingRequestId: z.string().uuid(),
+  tariffPlanId: z.string().cuid(),
+  pickup: bookingRoutePointSchema,
+  dropoff: bookingRoutePointSchema,
+  pickupDateTime: z.string().datetime({ offset: true }),
+  passenger: bookingPassengerSchema,
+  extras: bookingExtrasSchema.default({}),
+  flightNumber: z.string().trim().max(50).optional(),
+  notes: z.string().trim().max(2000).optional(),
+  couponCode: z.string().trim().min(1).max(100).transform(value => value.toUpperCase()).optional(),
+  paymentMethod: z.enum(["STRIPE", "CASH"]),
+}).strict().superRefine((data, ctx) => {
+  if (data.pickup.latitude === data.dropoff.latitude &&
+      data.pickup.longitude === data.dropoff.longitude) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Pickup and dropoff locations must be different",
+      path: ["dropoff"],
+    });
+  }
+});
+
+export type CreateBookingInput = z.infer<typeof createBookingSchema>;

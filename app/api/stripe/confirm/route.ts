@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import { stripe } from "@/lib/stripe";
 import { NextRequest, NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
@@ -29,10 +30,29 @@ export async function GET(request: NextRequest) {
       const paymentIntentId =
         typeof session.payment_intent === "string" ? session.payment_intent : null;
 
+      const trip = await db.trip.findUnique({ where: { id: tripId } });
+      if (!trip || trip.stripeCheckoutSessionId !== session.id) {
+        return NextResponse.json({ error: "Checkout session does not belong to this trip" }, { status: 403 });
+      }
+
+      const expectedAmount = trip.total
+        ? new Prisma.Decimal(trip.total).mul(100).toNumber()
+        : null;
+      if (
+        expectedAmount === null
+        || session.amount_total !== expectedAmount
+        || session.currency?.toUpperCase() !== trip.currency.toUpperCase()
+      ) {
+        return NextResponse.json({ error: "Payment amount or currency mismatch" }, { status: 409 });
+      }
+
       await db.trip.update({
         where: { id: tripId },
         data: {
-          paymentStatus: "paid",
+          paymentStatus: "PAID",
+          status: trip.status === "PENDING" ? "CONFIRMED" : trip.status,
+          paidAmount: new Prisma.Decimal(session.amount_total).div(100),
+          paidAt: trip.paidAt || new Date(),
           // Store the real PaymentIntent id so charge.refunded webhooks
           // can find this trip later.
           ...(paymentIntentId ? { stripePaymentIntentId: paymentIntentId } : {}),
@@ -41,14 +61,6 @@ export async function GET(request: NextRequest) {
 
       // Fallback for a delayed/missed webhook: confirm the trip so it
       // does not stay PENDING. Confirmation emails are sent by the webhook.
-      const trip = await db.trip.findUnique({ where: { id: tripId } });
-      if (trip && trip.status === "PENDING") {
-        await db.trip.update({
-          where: { id: tripId },
-          data: { status: "CONFIRMED" },
-        });
-      }
-
       return NextResponse.json({ success: true });
     }
 

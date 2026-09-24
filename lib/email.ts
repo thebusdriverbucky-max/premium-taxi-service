@@ -23,6 +23,7 @@ type EmailPayload = {
   to: string;
   subject: string;
   html: string;
+  idempotencyKey?: string;
 };
 
 export const sendEmail = async (data: EmailPayload) => {
@@ -35,12 +36,17 @@ export const sendEmail = async (data: EmailPayload) => {
   }
 
   try {
-    const { data: emailData, error } = await resend.emails.send({
-      from: EMAIL_FROM,
-      to: data.to,
-      subject: data.subject,
-      html: data.html,
-    });
+    const { data: emailData, error } = await resend.emails.send(
+      {
+        from: EMAIL_FROM,
+        to: data.to,
+        subject: data.subject,
+        html: data.html,
+      },
+      data.idempotencyKey
+        ? { idempotencyKey: data.idempotencyKey }
+        : undefined,
+    );
 
     if (error) {
       console.error('❌ Error sending email:', error);
@@ -495,6 +501,7 @@ export const sendBookingEmails = async (
         to: data.customerEmail,
         subject: `✅ Booking Confirmed #${data.tripNumber || data.id.slice(-6).toUpperCase()} — ${companyName}`,
         html: buildCustomerEmailHtml(data, companyName),
+        idempotencyKey: `trip/${data.id}/confirmation/customer`,
       })
     );
   }
@@ -506,6 +513,7 @@ export const sendBookingEmails = async (
         to: adminEmail,
         subject: `🚕 New Booking #${data.tripNumber || data.id.slice(-6).toUpperCase()} — ${data.customerName}`,
         html: buildAdminEmailHtml(data, companyName),
+        idempotencyKey: `trip/${data.id}/confirmation/admin`,
       })
     );
   }

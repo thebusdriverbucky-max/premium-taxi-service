@@ -11,7 +11,7 @@ interface LocationAutocompleteProps {
   label: string;
   placeholder: string;
   value: string;
-  onChange: (address: string, lat?: number, lng?: number) => void;
+  onChange: (address: string, lat?: number, lng?: number, placeId?: string) => void;
   error?: string;
   required?: boolean;
   className?: string;
@@ -87,9 +87,10 @@ export default function LocationAutocomplete({
 
       const lat = place.geometry.location.lat();
       const lng = place.geometry.location.lng();
+      const placeId = place.place_id;
 
       setInputValue(address);
-      onChange(address, lat, lng);
+      onChange(address, lat, lng, placeId);
     }
   };
 

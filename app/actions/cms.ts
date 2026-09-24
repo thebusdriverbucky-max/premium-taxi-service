@@ -1,7 +1,9 @@
 'use server';
 
 import { db as prisma } from '@/lib/db';
+import { requireAdmin } from '@/lib/require-admin';
 import { revalidatePath } from 'next/cache';
+import { z } from 'zod';
 
 export interface ContentPageData {
   slug: string;
@@ -9,8 +11,20 @@ export interface ContentPageData {
   content: string;
 }
 
+const contentPageSchema = z.object({
+  slug: z.string().trim().min(1).max(100).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
+  title: z.string().trim().min(1).max(200),
+  content: z.string().trim().min(1).max(100000),
+}).strict();
+
+const contentPageUpdateSchema = contentPageSchema.partial().refine(
+  data => Object.keys(data).length > 0,
+  { message: 'At least one field is required' },
+);
+
 export async function getPages() {
   try {
+    await requireAdmin();
     const pages = await prisma.contentPage.findMany({
       orderBy: { createdAt: 'desc' },
     });
@@ -23,8 +37,9 @@ export async function getPages() {
 
 export async function getPageBySlug(slug: string) {
   try {
+    const validatedSlug = contentPageSchema.shape.slug.parse(slug);
     const page = await prisma.contentPage.findUnique({
-      where: { slug },
+      where: { slug: validatedSlug, isVisible: true },
     });
     return { success: true, data: page };
   } catch (error) {
@@ -35,9 +50,12 @@ export async function getPageBySlug(slug: string) {
 
 export async function updatePage(id: string, data: Partial<ContentPageData>) {
   try {
+    await requireAdmin();
+    const validatedId = z.string().cuid().parse(id);
+    const validatedData = contentPageUpdateSchema.parse(data);
     await prisma.contentPage.update({
-      where: { id },
-      data,
+      where: { id: validatedId },
+      data: validatedData,
     });
     revalidatePath('/', 'layout');
     return { success: true };
@@ -49,9 +67,12 @@ export async function updatePage(id: string, data: Partial<ContentPageData>) {
 
 export async function togglePageVisibility(id: string, isVisible: boolean) {
   try {
+    await requireAdmin();
+    const validatedId = z.string().cuid().parse(id);
+    const validatedVisibility = z.boolean().parse(isVisible);
     await prisma.contentPage.update({
-      where: { id },
-      data: { isVisible },
+      where: { id: validatedId },
+      data: { isVisible: validatedVisibility },
     });
     revalidatePath('/', 'layout');
     return { success: true };
@@ -63,9 +84,11 @@ export async function togglePageVisibility(id: string, isVisible: boolean) {
 
 export async function createPage(data: ContentPageData) {
   try {
+    await requireAdmin();
+    const validatedData = contentPageSchema.parse(data);
     await prisma.contentPage.create({
       data: {
-        ...data,
+        ...validatedData,
         isVisible: true,
       },
     });
@@ -78,6 +101,13 @@ export async function createPage(data: ContentPageData) {
 }
 
 export async function seedCMSPages() {
+  try {
+    await requireAdmin();
+  } catch (error) {
+    console.error('Unauthorized CMS seed attempt:', error);
+    return { success: false, error: 'Failed to seed pages' };
+  }
+
   const pages = [
     {
       slug: "about",

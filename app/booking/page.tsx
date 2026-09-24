@@ -12,6 +12,13 @@ import { TariffZone } from "@/types/tariff";
 import { ChevronDown, ArrowRight, Info } from "lucide-react";
 import { useSettings } from "@/components/providers/settings-provider";
 
+interface SelectedLocation {
+  address: string;
+  latitude: number;
+  longitude: number;
+  placeId?: string;
+}
+
 // Fallback UI components if shadcn/ui ones are missing or different
 const SimpleCheckbox = ({ checked, onCheckedChange, id }: { checked: boolean; onCheckedChange: (c: boolean) => void; id: string }) => (
   <input
@@ -89,6 +96,8 @@ export default function BookingPage() {
   // Form State
   const [pickup, setPickup] = useState("");
   const [dropoff, setDropoff] = useState("");
+  const [pickupLocation, setPickupLocation] = useState<SelectedLocation | null>(null);
+  const [dropoffLocation, setDropoffLocation] = useState<SelectedLocation | null>(null);
   const [date, setDate] = useState("");
   const [time, setTime] = useState("");
   const [name, setName] = useState("");
@@ -98,6 +107,7 @@ export default function BookingPage() {
   const [flightNumber, setFlightNumber] = useState("");
   const [notes, setNotes] = useState("");
   const [paymentMethod, setPaymentMethod] = useState<"STRIPE" | "CASH">("STRIPE");
+  const [bookingRequestId, setBookingRequestId] = useState(() => crypto.randomUUID());
 
   // Auto-select payment method if only one is enabled
   useEffect(() => {
@@ -301,52 +311,39 @@ export default function BookingPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!name || !phone || !pickup || !dropoff || !date || !time || !selectedTariffId) {
+    if (!name || !email || !phone || !pickup || !dropoff || !date || !time || !selectedTariffId) {
       toast.error("Please fill in all required fields");
+      return;
+    }
+
+    if (!pickupLocation || !dropoffLocation) {
+      toast.error("Please select pickup and dropoff locations from the suggestions");
       return;
     }
 
     setIsSubmitting(true);
 
     try {
-      const extrasLabels: string[] = [];
-      if (hasLuggage) extrasLabels.push(`ADD_LUGGAGE:${luggageQty}:${luggageSize}`);
-      if (hasChildren) extrasLabels.push(`CHILD_SEAT:${childrenQty}`);
-
-      const formattedNotes = [
-        extrasLabels.length > 0 ? `[EXTRAS: ${extrasLabels.join(', ')}]` : '',
-        notes ? `Notes for driver: ${notes}` : '',
-      ].filter(Boolean).join('\n');
-
       const bookingData = {
-        items: [
-          {
-            productId: selectedTariffId, // Using tariff ID as productId for backend compatibility
-            quantity: 1,
-            price: price // We send the calculated price
-          }
-        ],
-        total: price,
-        guestEmail: email || undefined,
-        shippingAddress: {
-          firstName: String(name).split(' ')?.shift()?.trim() || String(name).trim(),
-          lastName: String(name).split(' ').slice(1).join(' ').trim() || "Guest",
-          email: email || "guest@example.com",
-          phone: phone,
-          street: pickup,
-          city: settings?.baseCity || "City",
-          state: "",
-          postalCode: "0000",
-          country: settings?.serviceArea || "N/A"
+        bookingRequestId,
+        tariffPlanId: selectedTariffId,
+        pickup: pickupLocation,
+        dropoff: dropoffLocation,
+        pickupDateTime: new Date(`${date}T${time}:00`).toISOString(),
+        passenger: {
+          name,
+          email,
+          phone,
+          count: passengerCount,
         },
-        pickupAddress: pickup,
-        dropoffAddress: dropoff,
-        pickupDateTime: `${date}T${time}:00`,
-        passengerCount: passengerCount,
-        flightNumber: flightNumber,
-        notes: formattedNotes,
+        extras: {
+          ...(hasLuggage ? { luggage: { quantity: luggageQty, size: luggageSize } } : {}),
+          ...(hasChildren ? { childSeats: { quantity: childrenQty } } : {}),
+        },
+        flightNumber: flightNumber || undefined,
+        notes: notes || undefined,
         couponCode: appliedCoupon?.code,
-        paymentMethod: paymentMethod
+        paymentMethod,
       };
 
       const response = await fetch("/api/trips", {
@@ -363,6 +360,7 @@ export default function BookingPage() {
 
       toast.success("Booking created successfully!");
       localStorage.removeItem("bookingData");
+      setBookingRequestId(crypto.randomUUID());
 
       if (result.url) {
         window.location.href = result.url;
@@ -479,7 +477,12 @@ export default function BookingPage() {
                   label="Pickup Location"
                   placeholder="Enter pickup location"
                   value={pickup}
-                  onChange={(val) => setPickup(val)}
+                  onChange={(address, latitude, longitude, placeId) => {
+                    setPickup(address);
+                    setPickupLocation(latitude !== undefined && longitude !== undefined
+                      ? { address, latitude, longitude, placeId }
+                      : null);
+                  }}
                   required
                   pinned={true}
                   mapCountryCode={mapCountryCode}
@@ -488,7 +491,12 @@ export default function BookingPage() {
                   label="Dropoff Location"
                   placeholder="Enter dropoff location"
                   value={dropoff}
-                  onChange={(val) => setDropoff(val)}
+                  onChange={(address, latitude, longitude, placeId) => {
+                    setDropoff(address);
+                    setDropoffLocation(latitude !== undefined && longitude !== undefined
+                      ? { address, latitude, longitude, placeId }
+                      : null);
+                  }}
                   required
                   mapCountryCode={mapCountryCode}
                 />

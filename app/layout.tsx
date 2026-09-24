@@ -14,14 +14,22 @@ import { TopContactBar } from "@/components/top-contact-bar";
 import { Analytics } from "@vercel/analytics/react";
 import { db as prisma } from "@/lib/db";
 import { SettingsProvider } from "@/components/providers/settings-provider";
-import { StoreSettingsData } from "@/app/actions/settings";
+import { publicStoreSettingsSelect } from "@/lib/public-settings";
 
 const inter = Inter({ subsets: ["latin"] });
 
 export async function generateMetadata(): Promise<Metadata> {
   let settings = null;
   try {
-    settings = await prisma.storeSettings.findFirst();
+    settings = await prisma.storeSettings.findFirst({
+      select: {
+        companyName: true,
+        heroSubtitle: true,
+        faviconUrl: true,
+        ogImageUrl: true,
+        siteLang: true,
+      },
+    });
   } catch (error) {
     console.error("Error fetching settings in generateMetadata:", error);
   }
@@ -64,7 +72,9 @@ export default async function RootLayout({
 }) {
   let settings = null;
   try {
-    settings = await prisma.storeSettings.findFirst();
+    settings = await prisma.storeSettings.findFirst({
+      select: publicStoreSettingsSelect,
+    });
   } catch (error) {
     console.error("Error fetching settings in RootLayout:", error);
   }
@@ -74,7 +84,7 @@ export default async function RootLayout({
     <html lang={siteLang} suppressHydrationWarning>
       <body className={inter.className}>
         <SessionProvider>
-          <SettingsProvider initialSettings={settings as unknown as StoreSettingsData}>
+          <SettingsProvider initialSettings={settings}>
             <ThemeProvider attribute="class" defaultTheme="dark" forcedTheme="dark" enableSystem={false}>
               <div className="flex flex-col min-h-screen bg-taxi-dark-navy text-white">
                 <TopContactBar />

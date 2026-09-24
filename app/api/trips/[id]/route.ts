@@ -3,6 +3,17 @@ import { db } from "@/lib/db";
 import { NextRequest, NextResponse } from "next/server";
 import { getOrderStatusUpdateEmailHtml } from "@/lib/email-templates";
 import { sendEmail } from "@/lib/email";
+import { z } from "zod";
+
+const adminTripUpdateSchema = z.object({
+  status: z.enum(["PENDING", "CONFIRMED", "IN_PROGRESS", "COMPLETED", "CANCELLED", "REFUNDED"]).optional(),
+  driverName: z.string().trim().max(120).nullable().optional(),
+  driverPhone: z.string().trim().max(50).nullable().optional(),
+  vehicleId: z.string().cuid().nullable().optional(),
+  driverId: z.string().cuid().nullable().optional(),
+}).strict().refine(data => Object.keys(data).length > 0, {
+  message: "At least one field is required",
+});
 
 export async function GET(
   request: NextRequest,
@@ -65,6 +76,10 @@ export async function PATCH(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    if (session.user.role !== "ADMIN") {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+
     const trip = await db.trip.findUnique({
       where: { id: params.id },
     });
@@ -73,15 +88,16 @@ export async function PATCH(
       return NextResponse.json({ error: "Trip not found" }, { status: 404 });
     }
 
-    // Only admin or trip owner can update
-    if (session.user.role !== "ADMIN" && trip.userId !== session.user.id) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
-
-    const body = await request.json();
+    const body = adminTripUpdateSchema.parse(await request.json());
     const { status, driverName, driverPhone, vehicleId, driverId } = body;
 
-    const updateData: any = {};
+    const updateData: {
+      status?: typeof status;
+      driverName?: string | null;
+      driverPhone?: string | null;
+      vehicleId?: string | null;
+      driverId?: string | null;
+    } = {};
     if (status) updateData.status = status;
     if (driverName !== undefined) updateData.driverName = driverName;
     if (driverPhone !== undefined) updateData.driverPhone = driverPhone;
@@ -133,6 +149,9 @@ export async function PATCH(
     return NextResponse.json(updatedTrip);
   } catch (error) {
     console.error("Trip update error:", error);
+    if (error instanceof z.ZodError) {
+      return NextResponse.json({ error: "Invalid trip update data" }, { status: 400 });
+    }
     return NextResponse.json(
       { error: "Failed to update trip" },
       { status: 500 }

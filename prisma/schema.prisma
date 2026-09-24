@@ -99,12 +99,15 @@ model TariffPlan {
 model Trip {
   id         String  @id @default(cuid())
   tripNumber String? @unique
+  bookingRequestId String? @unique
   userId     String?
   user       User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   // Маршрут
   pickupAddress  String
   dropoffAddress String
+  pickupPlaceId  String?
+  dropoffPlaceId String?
   pickupLat      Float?
   pickupLng      Float?
   dropoffLat     Float?
@@ -128,6 +131,7 @@ model Trip {
   passengerCount Int?
   flightNumber   String?
   notes          String?
+  extras         Json?
 
   // Стоимость
   basePrice Decimal? @db.Decimal(10, 2)
@@ -136,13 +140,20 @@ model Trip {
   discountCode   DiscountCode? @relation(fields: [discountCodeId], references: [id], onDelete: SetNull)
   total     Decimal? @db.Decimal(10, 2)
   currency  String   @default("EUR")
+  pricingBreakdown Json?
 
   // Статус
   status TripStatus @default(PENDING)
 
   // Оплата
-  stripePaymentIntentId String?
-  paymentStatus         String  @default("unpaid")
+  stripeCheckoutSessionId String? @unique
+  stripePaymentIntentId   String? @unique
+  paymentMethod           PaymentMethod?
+  paymentStatus           PaymentStatus @default(UNPAID)
+  paidAmount              Decimal? @db.Decimal(10, 2)
+  refundedAmount          Decimal @default(0) @db.Decimal(10, 2)
+  paidAt                   DateTime?
+  refundedAt               DateTime?
 
   // Водитель
   driverName  String?
@@ -195,6 +206,29 @@ enum TripStatus {
   COMPLETED
   CANCELLED
   REFUNDED
+}
+
+enum PaymentMethod {
+  STRIPE
+  CASH
+}
+
+enum PaymentStatus {
+  UNPAID   @map("unpaid")
+  PENDING  @map("pending")
+  PAID     @map("paid")
+  FAILED   @map("failed")
+  REFUNDED @map("refunded")
+  PARTIALLY_REFUNDED @map("partially_refunded")
+}
+
+model StripeWebhookEvent {
+  id          String   @id
+  type        String
+  processedAt DateTime @default(now())
+  createdAt   DateTime @default(now())
+
+  @@index([createdAt])
 }
 
 model DiscountCode {
