@@ -50,7 +50,7 @@ export async function GET(request: NextRequest) {
         where: { id: tripId },
         data: {
           paymentStatus: "PAID",
-          status: trip.status === "PENDING" ? "CONFIRMED" : trip.status,
+          status: trip.status === "PENDING" || trip.status === "CANCELLED" ? "CONFIRMED" : trip.status,
           paidAmount: new Prisma.Decimal(session.amount_total).div(100),
           paidAt: trip.paidAt || new Date(),
           // Store the real PaymentIntent id so charge.refunded webhooks

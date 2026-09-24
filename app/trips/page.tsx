@@ -32,7 +32,7 @@ export default async function MyTripsPage() {
         ) : (
           <div className="space-y-6">
             {trips.map((trip: any) => {
-              const isCash = !trip.stripePaymentIntentId;
+              const isCash = trip.paymentMethod === "CASH";
 
               return (
                 <Link href={`/trips/${trip.id}`} key={trip.id} className="block">

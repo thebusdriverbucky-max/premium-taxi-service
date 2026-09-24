@@ -39,7 +39,8 @@ export default function TripDetailsPage({
 
   const fetchTrip = useCallback(async () => {
     try {
-      const res = await fetch(`/api/trips/${params.id}`);
+      const query = sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : "";
+      const res = await fetch(`/api/trips/${params.id}${query}`);
       if (!res.ok) {
         if (res.status === 404) throw new Error("Trip not found");
         throw new Error("Failed to fetch trip");
@@ -51,7 +52,7 @@ export default function TripDetailsPage({
     } finally {
       setLoading(false);
     }
-  }, [params.id]);
+  }, [params.id, sessionId]);
 
   useEffect(() => {
     fetchTrip();
@@ -74,7 +75,7 @@ export default function TripDetailsPage({
   }, [sessionId, params.id, fetchTrip]);
 
   useEffect(() => {
-    if (!trip || trip.paymentStatus === "paid" || !trip.stripePaymentIntentId) return;
+    if (!trip || trip.paymentStatus === "PAID" || trip.paymentStatus === "REFUNDED") return;
 
     const interval = setInterval(() => {
       fetchTrip();
@@ -102,8 +103,8 @@ export default function TripDetailsPage({
     );
   }
 
-  const isCash = !trip.stripePaymentIntentId;
-  const isPaid = trip.paymentStatus === "paid";
+  const isCash = trip.paymentMethod === "CASH";
+  const isPaid = trip.paymentStatus === "PAID";
 
   return (
     <div className="min-h-screen bg-taxi-dark-navy text-white pt-32 pb-12">
@@ -130,7 +131,7 @@ export default function TripDetailsPage({
             </p>
             <div className="flex gap-2">
               <StatusBadge status={trip.status} />
-              <StatusBadge status={trip.paymentStatus === 'paid' ? 'PAID' : 'UNPAID'} />
+              <StatusBadge status={trip.paymentStatus} />
             </div>
           </div>
 

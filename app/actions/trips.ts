@@ -12,7 +12,12 @@ export const getMyTrips = async () => {
 
   const trips = await db.trip.findMany({
     where: {
-      userId: session.user.id,
+      OR: [
+        { userId: session.user.id },
+        ...(session.user.email
+          ? [{ userId: null, passengerEmail: session.user.email }]
+          : []),
+      ],
     },
     orderBy: {
       createdAt: "desc",

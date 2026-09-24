@@ -34,7 +34,10 @@ export async function GET(
       return NextResponse.json({ error: "Trip not found" }, { status: 404 });
     }
 
-    // Allow: admin, trip owner (logged in), or trip passenger email match (guest)
+    const checkoutSessionId = request.nextUrl.searchParams.get("session_id");
+
+    // Allow: admin, trip owner, matching account email, or possession of the
+    // Stripe Checkout Session ID immediately after a successful guest payment.
     const isAdmin = session?.user?.role === "ADMIN";
     const isOwner = session?.user?.id && trip.userId === session.user.id;
     const isGuestMatch =
@@ -42,8 +45,13 @@ export async function GET(
       trip.passengerEmail &&
       trip.passengerEmail !== "guest@example.com" &&
       session?.user?.email === trip.passengerEmail;
+    const hasCheckoutAccess = Boolean(
+      checkoutSessionId
+      && trip.stripeCheckoutSessionId
+      && checkoutSessionId === trip.stripeCheckoutSessionId,
+    );
 
-    if (!isAdmin && !isOwner && !isGuestMatch) {
+    if (!isAdmin && !isOwner && !isGuestMatch && !hasCheckoutAccess) {
       // Return limited public info for trip status page (no PII)
       return NextResponse.json({
         id: trip.id,

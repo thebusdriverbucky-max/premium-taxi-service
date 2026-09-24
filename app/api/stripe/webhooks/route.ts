@@ -111,7 +111,7 @@ async function markSessionPaid(
   return tx.trip.update({
     where: { id: trip.id },
     data: {
-      status: trip.status === "PENDING" ? "CONFIRMED" : trip.status,
+      status: trip.status === "PENDING" || trip.status === "CANCELLED" ? "CONFIRMED" : trip.status,
       paymentStatus: "PAID",
       stripeCheckoutSessionId: session.id,
       stripePaymentIntentId: paymentIntentId,
@@ -134,7 +134,7 @@ async function markPaymentIntentPaid(
   return tx.trip.update({
     where: { id: trip.id },
     data: {
-      status: trip.status === "PENDING" ? "CONFIRMED" : trip.status,
+      status: trip.status === "PENDING" || trip.status === "CANCELLED" ? "CONFIRMED" : trip.status,
       paymentStatus: "PAID",
       stripePaymentIntentId: paymentIntent.id,
       paidAmount: minorToDecimal(paymentIntent.amount_received),
