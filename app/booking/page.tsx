@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/Button";
@@ -11,6 +11,7 @@ import { TariffPlan } from "@prisma/client";
 import { TariffZone } from "@/types/tariff";
 import { ChevronDown, ArrowRight, Info } from "lucide-react";
 import { useSettings } from "@/components/providers/settings-provider";
+import { calculatePrice, decimalToMinor, type PricingZone } from "@/lib/pricing";
 
 interface SelectedLocation {
   address: string;
@@ -68,10 +69,6 @@ const CustomSelect = ({ value, onChange, options, className = "" }: { value: str
 export default function BookingPage() {
   const router = useRouter();
   const { settings } = useSettings();
-  const currencySymbol = settings?.currency === 'USD' ? '$'
-    : settings?.currency === 'GBP' ? '£'
-      : settings?.currency === 'CAD' ? 'CA$'
-        : '€'; // default EUR
 
   // Map Settings
   const mapCountryCode = settings?.mapCountryCode || "cy";
@@ -92,6 +89,12 @@ export default function BookingPage() {
   const [tariffs, setTariffs] = useState<TariffPlan[]>([]);
   const [selectedTariffId, setSelectedTariffId] = useState<string>("");
   const [isLoadingTariffs, setIsLoadingTariffs] = useState(true);
+  const selectedTariff = tariffs.find(t => t.id === selectedTariffId);
+  const displayedCurrency = selectedTariff?.currency || settings?.currency || "EUR";
+  const currencySymbol = displayedCurrency === 'USD' ? '$'
+    : displayedCurrency === 'GBP' ? '£'
+      : displayedCurrency === 'CAD' ? 'CA$'
+        : '€'; // default EUR
 
   // Form State
   const [pickup, setPickup] = useState("");
@@ -133,22 +136,29 @@ export default function BookingPage() {
 
   // Pricing State
   const [distanceKm, setDistanceKm] = useState(0);
+  const [durationMinutes, setDurationMinutes] = useState(0);
   const [price, setPrice] = useState(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [breakdown, setBreakdown] = useState({
     base: 0,
     distanceCost: 0,
+    durationCost: 0,
     airportSurcharge: 0,
     luggageFee: 0,
     childrenFee: 0,
   });
+
+  const handleRouteChange = useCallback((route: { distanceMeters: number; durationSeconds: number }) => {
+    setDistanceKm(route.distanceMeters / 1_000);
+    setDurationMinutes(route.durationSeconds / 60);
+  }, []);
 
   const handleApplyCoupon = async () => {
     if (!couponCode.trim()) return;
 
     setIsApplyingCoupon(true);
     try {
-      const response = await fetch("/api/coupons/validate", {
+      const response = await fetch("/api/discounts/validate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -251,82 +261,63 @@ export default function BookingPage() {
   // Pricing Logic
   useEffect(() => {
     const selectedTariff = tariffs.find(t => t.id === selectedTariffId);
-    const BASE = selectedTariff ? Number(selectedTariff.basePrice) : 30;
-    const RATE_PER_KM = selectedTariff ? Number(selectedTariff.pricePerKm) : 1.2;
-    const MIN_PRICE = BASE;
+    if (!selectedTariff) return;
+
+    const BASE = Number(selectedTariff.basePrice);
+    const RATE_PER_KM = Number(selectedTariff.pricePerKm);
+    const RATE_PER_MINUTE = Number(selectedTariff.pricePerMin);
     const AIRPORT_SURCHARGE_RATE = Number(settings?.airportSurcharge ?? 5);
     const LUGGAGE_FEE_RATE = Number(settings?.luggageFee ?? 5);
     const CHILDREN_FEE_RATE = Number(settings?.childSeatFee ?? 5);
 
-    let calculatedPrice = BASE;
-    const distanceCost = distanceKm * RATE_PER_KM;
-    calculatedPrice += distanceCost;
-
-    let airportSurcharge = 0;
-    if (pickup.toLowerCase().includes('airport') || dropoff.toLowerCase().includes('airport')) {
-      airportSurcharge = AIRPORT_SURCHARGE_RATE;
-      calculatedPrice += airportSurcharge;
-    }
-
-    let luggageFee = 0;
-    if (hasLuggage) {
-      luggageFee = LUGGAGE_FEE_RATE;
-      calculatedPrice += luggageFee;
-    }
-
-    let childrenFee = 0;
-    if (hasChildren) {
-      childrenFee = CHILDREN_FEE_RATE;
-      calculatedPrice += childrenFee;
-    }
-
-    // Apply tariff minimum price
-    const tariffMinPrice = selectedTariff ? Number(selectedTariff.minPrice) : 0;
-    let finalPrice = Math.max(Math.round(calculatedPrice), MIN_PRICE, tariffMinPrice);
-
-    // Check zone-based minimum price
-    if (selectedTariff?.zones && distanceKm) {
-      try {
-        const zonesJson = selectedTariff.zones;
-        let zones: TariffZone[] = [];
-        if (typeof zonesJson === 'string') {
-          zones = JSON.parse(zonesJson) as TariffZone[];
-        } else if (Array.isArray(zonesJson)) {
-          zones = zonesJson as unknown as TariffZone[];
-        }
-
-        if (Array.isArray(zones)) {
-          const activeZone = zones.find((z) => distanceKm >= z.minKm && distanceKm < z.maxKm);
-          if (activeZone?.minPrice) {
-            finalPrice = Math.max(finalPrice, Number(activeZone.minPrice));
-          }
-        }
-      } catch (e) {
-        console.error("Error parsing price zones:", e);
+    try {
+      let rawZones: TariffZone[] = [];
+      if (typeof selectedTariff.zones === "string") {
+        rawZones = JSON.parse(selectedTariff.zones) as TariffZone[];
+      } else if (Array.isArray(selectedTariff.zones)) {
+        rawZones = selectedTariff.zones as unknown as TariffZone[];
       }
+      const zones: PricingZone[] = rawZones.map((zone, index) => ({
+        name: zone.name || `Zone ${index + 1}`,
+        minDistanceMeters: Math.round(Number(zone.minKm) * 1_000),
+        maxDistanceMeters: Math.round(Number(zone.maxKm) * 1_000),
+        minimumMinor: decimalToMinor(String(zone.minPrice), `zones[${index}].minPrice`),
+      }));
+      const pricing = calculatePrice({
+        distanceMeters: Math.round(distanceKm * 1_000),
+        durationSeconds: Math.round(durationMinutes * 60),
+        baseFareMinor: decimalToMinor(String(selectedTariff.basePrice), "basePrice"),
+        pricePerKmMinor: decimalToMinor(String(selectedTariff.pricePerKm), "pricePerKm"),
+        pricePerMinuteMinor: decimalToMinor(String(selectedTariff.pricePerMin), "pricePerMin"),
+        minimumFareMinor: decimalToMinor(String(selectedTariff.minPrice), "minPrice"),
+        zones,
+        includesAirport: /airport/i.test(`${pickup} ${dropoff}`),
+        airportSurchargeMinor: decimalToMinor(String(AIRPORT_SURCHARGE_RATE), "airportSurcharge"),
+        luggageFeeMinor: decimalToMinor(String(LUGGAGE_FEE_RATE), "luggageFee"),
+        luggageQuantity: hasLuggage ? luggageQty : 0,
+        childSeatFeeMinor: decimalToMinor(String(CHILDREN_FEE_RATE), "childSeatFee"),
+        childSeatQuantity: hasChildren ? childrenQty : 0,
+        discount: appliedCoupon?.type === "FIXED"
+          ? { type: "FIXED", amountMinor: decimalToMinor(String(appliedCoupon.value), "coupon.value") }
+          : appliedCoupon?.type === "PERCENT"
+            ? { type: "PERCENT", basisPoints: Math.round(appliedCoupon.value * 100) }
+            : undefined,
+      });
+
+      setDiscountAmount(pricing.discountMinor / 100);
+      setPrice(pricing.totalMinor / 100);
+      setBreakdown({
+        base: BASE,
+        distanceCost: pricing.distanceFareMinor / 100,
+        durationCost: pricing.durationFareMinor / 100,
+        airportSurcharge: pricing.airportSurchargeMinor / 100,
+        luggageFee: pricing.luggageFeeMinor / 100,
+        childrenFee: pricing.childSeatFeeMinor / 100,
+      });
+    } catch (error) {
+      console.error("Unable to calculate booking price:", error);
     }
-
-    // Apply Discount
-    let currentDiscount = 0;
-    if (appliedCoupon) {
-      if (appliedCoupon.type === "FIXED") {
-        currentDiscount = appliedCoupon.value;
-      } else if (appliedCoupon.type === "PERCENT") {
-        currentDiscount = (finalPrice * appliedCoupon.value) / 100;
-      }
-    }
-
-    setDiscountAmount(currentDiscount);
-    setPrice(Math.max(0, finalPrice - currentDiscount));
-    setBreakdown({
-      base: BASE,
-      distanceCost,
-      airportSurcharge,
-      luggageFee,
-      childrenFee,
-    });
-
-  }, [distanceKm, pickup, dropoff, hasLuggage, hasChildren, selectedTariffId, tariffs, appliedCoupon]);
+  }, [distanceKm, durationMinutes, pickup, dropoff, hasLuggage, luggageQty, hasChildren, childrenQty, selectedTariffId, tariffs, appliedCoupon, settings]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -482,7 +473,7 @@ export default function BookingPage() {
               <BookingMap
                 pickup={pickup}
                 dropoff={dropoff}
-                onDistanceChange={setDistanceKm}
+                onRouteChange={handleRouteChange}
                 mapCenter={mapCenter}
                 mapZoom={mapZoom}
                 className="!min-h-[300px] !h-[300px] !border-taxi-gold-DEFAULT/40 !rounded-xl"
@@ -740,6 +731,12 @@ export default function BookingPage() {
                   <span>Distance Cost ({distanceKm.toFixed(1)} km)</span>
                   <span>{currencySymbol}{breakdown.distanceCost.toFixed(2)}</span>
                 </div>
+                {breakdown.durationCost > 0 && (
+                  <div className="flex justify-between">
+                    <span>Time Cost ({durationMinutes.toFixed(0)} min)</span>
+                    <span>{currencySymbol}{breakdown.durationCost.toFixed(2)}</span>
+                  </div>
+                )}
                 {breakdown.airportSurcharge > 0 && (
                   <div className="flex justify-between text-taxi-gold-DEFAULT">
                     <span>Airport Surcharge</span>
@@ -766,7 +763,7 @@ export default function BookingPage() {
                 )}
                 <div className="border-t border-white/10 my-2 pt-2 flex justify-between items-center">
                   <span className="text-lg font-bold text-white">Total Price</span>
-                  <span className="text-3xl font-bold text-taxi-gold-DEFAULT">{currencySymbol}{price}</span>
+                  <span className="text-3xl font-bold text-taxi-gold-DEFAULT">{currencySymbol}{price.toFixed(2)}</span>
                 </div>
               </div>
             </section>
@@ -790,7 +787,7 @@ export default function BookingPage() {
               <BookingMap
                 pickup={pickup}
                 dropoff={dropoff}
-                onDistanceChange={setDistanceKm}
+                onRouteChange={handleRouteChange}
                 mapCenter={mapCenter}
                 mapZoom={mapZoom}
               />

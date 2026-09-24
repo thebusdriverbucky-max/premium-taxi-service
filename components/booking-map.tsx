@@ -129,7 +129,7 @@ const darkLuxuryMapStyle = [
 interface BookingMapProps {
   pickup: string;
   dropoff: string;
-  onDistanceChange: (distanceKm: number) => void;
+  onRouteChange: (route: { distanceMeters: number; durationSeconds: number }) => void;
   className?: string;
   mapCenter?: { lat: number; lng: number };
   mapZoom?: number;
@@ -138,7 +138,7 @@ interface BookingMapProps {
 export default function BookingMap({ 
   pickup, 
   dropoff, 
-  onDistanceChange, 
+  onRouteChange,
   className,
   mapCenter,
   mapZoom = 10
@@ -177,15 +177,17 @@ export default function BookingMap({
       });
 
       const route = result.routes[0];
-      if (route && route.legs && route.legs[0] && route.legs[0].distance) {
+      if (route && route.legs && route.legs[0] && route.legs[0].distance && route.legs[0].duration) {
         const distanceInMeters = route.legs[0].distance.value;
-        const distanceInKm = distanceInMeters / 1000;
-        onDistanceChange(distanceInKm);
+        onRouteChange({
+          distanceMeters: distanceInMeters,
+          durationSeconds: route.legs[0].duration.value,
+        });
       }
     } else {
       console.error(`Directions request failed due to ${status}`);
     }
-  }, [onDistanceChange]);
+  }, [onRouteChange]);
 
   const directionsOptions = useMemo(() => {
     if (!isLoaded || !pickup || !dropoff) return null;
@@ -265,4 +267,3 @@ export default function BookingMap({
     </div>
   );
 }
-
