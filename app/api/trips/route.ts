@@ -1,7 +1,11 @@
 import { auth } from "@/lib/auth";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { db } from "@/lib/db";
-import { stripe } from "@/lib/stripe";
+import {
+  getStripe,
+  getStripeDeploymentId,
+  isStripeConfigured,
+} from "@/lib/stripe";
 import { NextRequest, NextResponse } from "next/server";
 import { createBookingSchema } from "@/lib/validations";
 import { generateOrderNumber } from "@/lib/order-number";
@@ -80,6 +84,13 @@ export async function POST(request: NextRequest) {
     }
 
     const { tariffPlanId, pickup, dropoff, passenger, extras, paymentMethod } = validatedData;
+    if (paymentMethod === "STRIPE" && !isStripeConfigured()) {
+      return NextResponse.json(
+        { error: "Card payments are not configured" },
+        { status: 503 },
+      );
+    }
+
     const existingTrip = await db.trip.findUnique({
       where: { bookingRequestId: validatedData.bookingRequestId },
       select: { id: true, stripeCheckoutSessionId: true, paymentMethod: true },
@@ -89,7 +100,7 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ success: true, tripId: existingTrip.id, url: `${baseUrl}/trips/${existingTrip.id}?success=true` });
       }
       if (existingTrip.stripeCheckoutSessionId) {
-        const existingSession = await stripe.checkout.sessions.retrieve(existingTrip.stripeCheckoutSessionId);
+        const existingSession = await getStripe().checkout.sessions.retrieve(existingTrip.stripeCheckoutSessionId);
         return NextResponse.json({ tripId: existingTrip.id, url: existingSession.url });
       }
       return NextResponse.json({ error: "Booking is already being processed" }, { status: 409 });
@@ -267,7 +278,7 @@ export async function POST(request: NextRequest) {
     // Create Stripe Session
     console.log("💳 Creating Stripe session...");
     try {
-      const stripeSession = await stripe.checkout.sessions.create({
+      const stripeSession = await getStripe().checkout.sessions.create({
         payment_method_types: ["card"],
         line_items: [
           {
@@ -289,9 +300,13 @@ export async function POST(request: NextRequest) {
         metadata: {
           tripId: trip.id,
           orderId: trip.id, // Keep for backward compatibility with webhook
+          deploymentId: getStripeDeploymentId(),
         },
         payment_intent_data: {
-          metadata: { tripId: trip.id },
+          metadata: {
+            tripId: trip.id,
+            deploymentId: getStripeDeploymentId(),
+          },
         },
       }, { idempotencyKey: `booking/${validatedData.bookingRequestId}` });
       console.log("✅ Stripe session created:", stripeSession.id);

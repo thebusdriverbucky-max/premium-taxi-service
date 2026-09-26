@@ -62,7 +62,11 @@ export default function TripDetailsPage({
     if (sessionId && params.id) {
       const confirmPayment = async () => {
         try {
-          const res = await fetch(`/api/stripe/confirm?session_id=${sessionId}&tripId=${params.id}`);
+          const res = await fetch("/api/stripe/confirm", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ sessionId, tripId: params.id }),
+          });
           if (res.ok) {
             fetchTrip();
           }

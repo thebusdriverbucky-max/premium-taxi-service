@@ -16,8 +16,19 @@ function escapeHtml(unsafe: string) {
     .replace(/'/g, "&#039;");
 }
 
-const resend = new Resend(process.env.RESEND_API_KEY);
 const EMAIL_FROM = process.env.EMAIL_FROM || 'onboarding@resend.dev';
+
+let resendClient: Resend | null = null;
+let resendClientApiKey: string | null = null;
+
+function getResendClient(apiKey: string): Resend {
+  if (!resendClient || resendClientApiKey !== apiKey) {
+    resendClient = new Resend(apiKey);
+    resendClientApiKey = apiKey;
+  }
+
+  return resendClient;
+}
 
 type EmailPayload = {
   to: string;
@@ -27,7 +38,9 @@ type EmailPayload = {
 };
 
 export const sendEmail = async (data: EmailPayload) => {
-  if (!process.env.RESEND_API_KEY) {
+  const apiKey = process.env.RESEND_API_KEY;
+
+  if (!apiKey) {
     console.log('⚠️ RESEND_API_KEY not set. Logging email to console.');
     console.log('📧 [MOCK EMAIL] To:', data.to);
     console.log('Subject:', data.subject);
@@ -36,6 +49,7 @@ export const sendEmail = async (data: EmailPayload) => {
   }
 
   try {
+    const resend = getResendClient(apiKey);
     const { data: emailData, error } = await resend.emails.send(
       {
         from: EMAIL_FROM,
@@ -491,8 +505,8 @@ export const sendBookingEmails = async (
   data: TripEmailData,
   adminEmail: string,
   companyName: string
-): Promise<void> => {
-  const promises: Promise<any>[] = [];
+): Promise<boolean> => {
+  const promises: Promise<unknown | null>[] = [];
 
   // Email to customer (skip generic guest emails)
   if (data.customerEmail && !data.customerEmail.includes('guest@')) {
@@ -518,5 +532,7 @@ export const sendBookingEmails = async (
     );
   }
 
-  await Promise.allSettled(promises);
+  const results = await Promise.allSettled(promises);
+  return results.every((result) =>
+    result.status === 'fulfilled' && result.value !== null);
 };

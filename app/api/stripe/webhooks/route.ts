@@ -2,15 +2,64 @@ import { Prisma, type Trip } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
 
+import { deliverBookingEmail } from "@/lib/booking-email-outbox";
 import { db } from "@/lib/db";
-import { sendBookingEmails } from "@/lib/email";
-import { stripe } from "@/lib/stripe";
+import { getStripe, getStripeDeploymentId } from "@/lib/stripe";
+import { constructStripeWebhookEvent } from "@/lib/stripe-webhook-signature";
+import {
+  applyTripRefund,
+  expireTripPayment,
+  markTripPaymentAttemptFailed,
+  settleTripPaid,
+} from "@/lib/trip-settlement";
 
 export const dynamic = "force-dynamic";
 
 const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET || "";
 
 class WebhookDataError extends Error {}
+class DuplicateWebhookEventError extends Error {}
+
+async function eventDeploymentId(event: Stripe.Event): Promise<string | null> {
+  switch (event.type) {
+    case "checkout.session.completed":
+    case "checkout.session.async_payment_succeeded":
+    case "checkout.session.expired":
+    case "checkout.session.async_payment_failed":
+      return (event.data.object as Stripe.Checkout.Session).metadata?.deploymentId || null;
+    case "payment_intent.succeeded":
+    case "payment_intent.payment_failed":
+      return (event.data.object as Stripe.PaymentIntent).metadata.deploymentId || null;
+    case "charge.refunded": {
+      const charge = event.data.object as Stripe.Charge;
+      if (charge.metadata.deploymentId) return charge.metadata.deploymentId;
+      if (charge.payment_intent && typeof charge.payment_intent !== "string") {
+        return charge.payment_intent.metadata.deploymentId || null;
+      }
+      if (typeof charge.payment_intent === "string") {
+        const paymentIntent = await getStripe().paymentIntents.retrieve(charge.payment_intent);
+        return paymentIntent.metadata.deploymentId || null;
+      }
+      return null;
+    }
+    default:
+      return null;
+  }
+}
+
+async function recordWebhookEvent(
+  tx: Prisma.TransactionClient,
+  event: Stripe.Event,
+) {
+  try {
+    await tx.stripeWebhookEvent.create({ data: { id: event.id, type: event.type } });
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      throw new DuplicateWebhookEventError();
+    }
+    throw error;
+  }
+}
 
 function minorToDecimal(minor: number): Prisma.Decimal {
   if (!Number.isSafeInteger(minor) || minor < 0) {
@@ -108,17 +157,11 @@ async function markSessionPaid(
     throw new WebhookDataError("Paid Checkout Session has no PaymentIntent");
   }
 
-  return tx.trip.update({
-    where: { id: trip.id },
-    data: {
-      status: trip.status === "PENDING" || trip.status === "CANCELLED" ? "CONFIRMED" : trip.status,
-      paymentStatus: "PAID",
-      stripeCheckoutSessionId: session.id,
-      stripePaymentIntentId: paymentIntentId,
-      paidAmount: minorToDecimal(session.amount_total),
-      paidAt: trip.paidAt || new Date(),
-    },
-    include: { tariffPlan: true },
+  return settleTripPaid(tx, {
+    trip,
+    checkoutSessionId: session.id,
+    paymentIntentId,
+    paidAmount: minorToDecimal(session.amount_total),
   });
 }
 
@@ -131,16 +174,10 @@ async function markPaymentIntentPaid(
   const trip = await findTripForPaymentIntent(tx, paymentIntent);
   assertPaymentMatchesTrip(trip, paymentIntent.amount_received, paymentIntent.currency);
 
-  return tx.trip.update({
-    where: { id: trip.id },
-    data: {
-      status: trip.status === "PENDING" || trip.status === "CANCELLED" ? "CONFIRMED" : trip.status,
-      paymentStatus: "PAID",
-      stripePaymentIntentId: paymentIntent.id,
-      paidAmount: minorToDecimal(paymentIntent.amount_received),
-      paidAt: trip.paidAt || new Date(),
-    },
-    include: { tariffPlan: true },
+  return settleTripPaid(tx, {
+    trip,
+    paymentIntentId: paymentIntent.id,
+    paidAmount: minorToDecimal(paymentIntent.amount_received),
   });
 }
 
@@ -151,14 +188,7 @@ async function markPaymentFailed(
   const trip = await findTripForPaymentIntent(tx, paymentIntent);
   if (trip.paymentStatus === "PAID" || trip.paymentStatus === "REFUNDED") return;
 
-  await tx.trip.update({
-    where: { id: trip.id },
-    data: {
-      paymentStatus: "FAILED",
-      status: trip.status === "PENDING" ? "CANCELLED" : trip.status,
-      stripePaymentIntentId: paymentIntent.id,
-    },
-  });
+  await markTripPaymentAttemptFailed(tx, trip, paymentIntent.id);
 }
 
 async function markSessionExpired(
@@ -168,13 +198,7 @@ async function markSessionExpired(
   const trip = await findTripForSession(tx, session);
   if (trip.paymentStatus === "PAID" || trip.paymentStatus === "REFUNDED") return;
 
-  await tx.trip.update({
-    where: { id: trip.id },
-    data: {
-      paymentStatus: "FAILED",
-      status: trip.status === "PENDING" ? "CANCELLED" : trip.status,
-    },
-  });
+  await expireTripPayment(tx, trip);
 }
 
 async function applyRefund(tx: Prisma.TransactionClient, charge: Stripe.Charge) {
@@ -197,20 +221,16 @@ async function applyRefund(tx: Prisma.TransactionClient, charge: Stripe.Charge) 
   }
 
   const fullyRefunded = charge.amount_refunded === paidMinor;
-  await tx.trip.update({
-    where: { id: trip.id },
-    data: {
-      refundedAmount: minorToDecimal(charge.amount_refunded),
-      refundedAt: charge.amount_refunded > 0 ? new Date() : null,
-      paymentStatus: fullyRefunded ? "REFUNDED" : "PARTIALLY_REFUNDED",
-      status: fullyRefunded ? "REFUNDED" : trip.status,
-    },
+  await applyTripRefund(tx, {
+    trip,
+    refundedAmount: minorToDecimal(charge.amount_refunded),
+    fullyRefunded,
   });
 }
 
 async function processEvent(event: Stripe.Event) {
   return db.$transaction(async (tx) => {
-    await tx.stripeWebhookEvent.create({ data: { id: event.id, type: event.type } });
+    await recordWebhookEvent(tx, event);
 
     switch (event.type) {
       case "checkout.session.completed":
@@ -234,35 +254,6 @@ async function processEvent(event: Stripe.Event) {
   });
 }
 
-async function sendConfirmationEmails(trip: Awaited<ReturnType<typeof markSessionPaid>>) {
-  if (!trip) return;
-  const settings = await db.storeSettings.findFirst({
-    select: { storeEmail: true, companyName: true },
-  });
-
-  await sendBookingEmails({
-    id: trip.id,
-    tripNumber: trip.tripNumber || undefined,
-    customerName: trip.passengerName || "Customer",
-    customerEmail: trip.passengerEmail || "",
-    customerPhone: trip.passengerPhone || "",
-    pickupLocation: trip.pickupAddress,
-    dropoffLocation: trip.dropoffAddress,
-    pickupDate: trip.pickupDateTime || new Date(),
-    pickupTime: trip.pickupDateTime
-      ? new Date(trip.pickupDateTime).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-      : "",
-    passengers: trip.passengerCount || 1,
-    tariffName: trip.tariffPlan?.name || "Standard",
-    price: Number(trip.total),
-    currency: trip.currency,
-    paymentMethod: "STRIPE",
-    paymentStatus: "PAID",
-    flightNumber: trip.flightNumber || undefined,
-    notes: trip.notes || undefined,
-  }, settings?.storeEmail || process.env.ADMIN_EMAIL || "admin@example.com", settings?.companyName || "Taxi Service");
-}
-
 export async function POST(request: NextRequest) {
   if (!webhookSecret) {
     return NextResponse.json({ error: "Webhook not configured" }, { status: 500 });
@@ -270,7 +261,8 @@ export async function POST(request: NextRequest) {
 
   let event: Stripe.Event;
   try {
-    event = stripe.webhooks.constructEvent(
+    event = constructStripeWebhookEvent(
+      getStripe(),
       await request.text(),
       request.headers.get("stripe-signature") || "",
       webhookSecret,
@@ -280,11 +272,24 @@ export async function POST(request: NextRequest) {
   }
 
   try {
+    if (await eventDeploymentId(event) !== getStripeDeploymentId()) {
+      return NextResponse.json({ received: true, ignored: true });
+    }
+  } catch (error) {
+    console.error("Stripe webhook deployment validation failed", {
+      eventId: event.id,
+      eventType: event.type,
+      error: error instanceof Error ? error.message : "Unknown error",
+    });
+    return NextResponse.json({ error: "Webhook validation failed" }, { status: 500 });
+  }
+
+  try {
     const trip = await processEvent(event);
-    await sendConfirmationEmails(trip);
+    if (trip) await deliverBookingEmail(trip.id);
     return NextResponse.json({ received: true });
   } catch (error) {
-    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+    if (error instanceof DuplicateWebhookEventError) {
       return NextResponse.json({ received: true, duplicate: true });
     }
     console.error("Stripe webhook processing failed", {

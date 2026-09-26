@@ -100,12 +100,12 @@ export async function createPage(data: ContentPageData) {
   }
 }
 
-export async function seedCMSPages() {
+export async function createMissingCMSPages() {
   try {
     await requireAdmin();
   } catch (error) {
-    console.error('Unauthorized CMS seed attempt:', error);
-    return { success: false, error: 'Failed to seed pages' };
+    console.error('Unauthorized CMS initialization attempt:', error);
+    return { success: false, error: 'Failed to create missing pages' };
   }
 
   const pages = [
@@ -157,67 +157,17 @@ A: Yes, child seats are available upon request. Please select this option under 
     {
       slug: "terms",
       title: "Terms of Service",
-      content: `Agreement to Terms
-By accessing and using our booking platform, you accept and agree to be bound by the terms and provision of this agreement.
-
-Service Provision
-• We aim to provide reliable transportation services as booked.
-• Drivers reserve the right to refuse service to passengers who exhibit unsafe or inappropriate behavior.
-• Wait times may apply and could incur additional charges if they exceed the complimentary waiting period.
-
-Booking and Cancellation
-• Bookings must be made with accurate pickup and dropoff information.
-• Cancellations made within 2 hours of the scheduled pickup time may be subject to a cancellation fee.
-
-Limitation of Liability
-In no event shall our company be liable for any indirect damages, or delays caused by traffic, weather conditions, or circumstances beyond our control.
-
-Changes to Terms
-We reserve the right to modify or amend these terms at any time. Your continued use of our service following the posting of revised Terms means that you accept and agree to the changes.`,
+      content: "Replace this starter text with terms reviewed for your business, location, booking, cancellation, and payment policies before launch.",
     },
     {
       slug: "privacy",
       title: "Privacy Policy",
-      content: `Introduction
-We respect your privacy and are committed to protecting your personal data. This privacy policy explains how we collect, use, and protect your information when you use our taxi service.
-
-Information We Collect
-• Name, email address, and phone number (for account creation and booking)
-• Pickup and dropoff locations (to provide the service)
-• Payment information (processed securely by Stripe - we don't store it)
-• Usage data (cookies, analytics)
-
-How We Use Your Data
-• Process and manage your bookings
-• Communicate with you regarding your ride (e.g., driver arrival notifications)
-• Improve our services and dispatch efficiency
-• Comply with legal and regulatory obligations
-
-Payment Security
-Payment information is processed securely by Stripe. We do not store credit card information on our servers. All transactions are encrypted and PCI-DSS compliant.
-
-Your Rights
-You have the right to access, update, or request deletion of your personal data. You may also opt-out of promotional communications at any time.`,
+      content: "Replace this starter text with a privacy policy reviewed for the personal, route, booking, analytics, and payment data your business processes before launch.",
     },
     {
       slug: "cookies",
       title: "Cookie Policy",
-      content: `What Are Cookies?
-Cookies are small text files that are stored on your computer or mobile device when you visit our website. They help us remember your preferences and understand how you use our site.
-
-Types of Cookies We Use
-Essential Cookies: Required for the website and booking system to function properly.
-Analytics Cookies: Help us understand how visitors interact with our platform.
-Preference Cookies: Remember your choices (such as language or previous locations).
-
-Managing Cookies
-You can control and manage cookies through your browser settings. Most browsers allow you to view, delete, or block cookies.
-
-Third-Party Services
-We use third-party services that may set their own cookies:
-• Stripe: Payment processing and fraud prevention
-• Google Maps: Location search and route calculation
-• NextAuth: User authentication`,
+      content: "Replace this starter text with a cookie policy that reflects the analytics, maps, authentication, payment, and other services enabled on your deployment.",
     },
     {
       slug: "contact",
@@ -232,22 +182,10 @@ Support Response Time: Within 2 hours for urgent inquiries`,
   ];
 
   try {
-    // Remove unwanted pages
-    await prisma.contentPage.deleteMany({
-      where: {
-        slug: {
-          in: ['shipping', 'careers', 'shipping-information']
-        }
-      }
-    });
-
     for (const page of pages) {
       await prisma.contentPage.upsert({
         where: { slug: page.slug },
-        update: {
-          title: page.title,
-          content: page.content,
-        },
+        update: {},
         create: {
           ...page,
           isVisible: true,
@@ -256,7 +194,7 @@ Support Response Time: Within 2 hours for urgent inquiries`,
     }
     return { success: true };
   } catch (error) {
-    console.error('Error seeding CMS pages:', error);
-    return { success: false, error: 'Failed to seed CMS pages' };
+    console.error('Error creating missing CMS pages:', error);
+    return { success: false, error: 'Failed to create missing CMS pages' };
   }
 }

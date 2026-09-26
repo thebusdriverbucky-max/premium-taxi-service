@@ -3,7 +3,7 @@
 import { useState, useEffect, useTransition } from 'react';
 import { useForm } from 'react-hook-form';
 import { getSettings, updateSettings, StoreSettingsData } from '@/app/actions/settings';
-import { getPages, updatePage, ContentPageData, seedCMSPages } from '@/app/actions/cms';
+import { getPages, updatePage, ContentPageData, createMissingCMSPages } from '@/app/actions/cms';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
@@ -1225,19 +1225,19 @@ export default function SettingsPage() {
             <div className="flex space-x-2">
               <Button onClick={() => {
                 startTransition(async () => {
-                  const res = await seedCMSPages();
+                  const res = await createMissingCMSPages();
                   if (res.success) {
-                    toast.success('Default pages seeded');
+                    toast.success('Missing default pages created; existing pages were unchanged');
                     loadPages();
                   } else {
-                    toast.error('Failed to seed pages');
+                    toast.error('Failed to create missing pages');
                   }
                 });
               }}
                 variant="ghost"
                 className="bg-white/10 border border-taxi-gold/30 text-taxi-gold hover:bg-white/20 hover:border-taxi-gold/50 transition-all"
                 size="sm">
-                Seed Default Pages
+                Create Missing Pages
               </Button>
             </div>
           </div>
