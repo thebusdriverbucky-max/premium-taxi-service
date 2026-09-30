@@ -8,6 +8,7 @@ import {
 } from "@/lib/stripe";
 import { NextRequest, NextResponse } from "next/server";
 import { createBookingSchema } from "@/lib/validations";
+import { validationFieldErrors } from "@/lib/validation-errors";
 import { generateOrderNumber } from "@/lib/order-number";
 import { z } from "zod";
 import { sendBookingEmails } from "@/lib/email";
@@ -77,8 +78,7 @@ export async function POST(request: NextRequest) {
       validatedData = createBookingSchema.parse(body);
     } catch (error) {
       if (error instanceof z.ZodError) {
-        console.error("❌ Validation failed:", error.issues);
-        return NextResponse.json({ error: "Invalid input", details: error.issues }, { status: 400 });
+        return NextResponse.json({ error: "Please correct the booking details", fieldErrors: validationFieldErrors(error.issues) }, { status: 400 });
       }
       throw error;
     }
@@ -86,7 +86,7 @@ export async function POST(request: NextRequest) {
     const { tariffPlanId, pickup, dropoff, passenger, extras, paymentMethod } = validatedData;
     if (paymentMethod === "STRIPE" && !isStripeConfigured()) {
       return NextResponse.json(
-        { error: "Card payments are not configured" },
+        { error: "Card payments are currently unavailable. Choose cash if offered, or contact us.", code: "CARD_NOT_CONFIGURED", fieldErrors: { paymentMethod: "Card payments are currently unavailable" } },
         { status: 503 },
       );
     }
@@ -113,9 +113,11 @@ export async function POST(request: NextRequest) {
       console.error("❌ Tariff plan not found:", tariffPlanId);
       return NextResponse.json({ error: "Tariff plan not found" }, { status: 400 });
     }
+    if (passenger.count > tariffPlan.maxPassengers) {
+      return NextResponse.json({ error: 'Too many passengers for this vehicle', fieldErrors: { 'passenger.count': `This vehicle allows at most ${tariffPlan.maxPassengers} passengers` } }, { status: 400 });
+    }
     const currency = tariffPlan.currency || "EUR";
-    const [storeSettings, route] = await Promise.all([
-      db.storeSettings.findFirst({
+    const storeSettings = await db.storeSettings.findFirst({
         select: {
           airportSurcharge: true,
           luggageFee: true,
@@ -125,9 +127,7 @@ export async function POST(request: NextRequest) {
           enableCardPayment: true,
           enableCashPayment: true,
         },
-      }),
-      computeDrivingRoute(pickup, dropoff),
-    ]);
+      });
 
     if (
       (paymentMethod === "STRIPE" && storeSettings?.enableCardPayment === false)
@@ -135,6 +135,8 @@ export async function POST(request: NextRequest) {
     ) {
       return NextResponse.json({ error: "Selected payment method is not available" }, { status: 400 });
     }
+
+    const route = await computeDrivingRoute(pickup, dropoff);
 
     let discount: PricingDiscount | undefined;
     let discountCodeId: string | null = null;
@@ -319,13 +321,16 @@ export async function POST(request: NextRequest) {
 
       return NextResponse.json({ url: stripeSession.url });
     } catch (stripeError: any) {
-      console.error("❌ Stripe error:", stripeError);
+      console.error("Stripe checkout creation failed");
       throw stripeError;
     }
   } catch (error: any) {
-    console.error("❌ Trip creation error:", error);
+    if (error instanceof RouteCalculationError) {
+      return NextResponse.json({ error: 'Unable to calculate a driving route. Please select the locations again or try later.', fieldErrors: { route: 'Driving route is unavailable' } }, { status: 503 });
+    }
+    console.error("Trip creation failed");
     return NextResponse.json(
-      { error: "Failed to create trip", message: error.message },
+      { error: "Failed to create trip. Please try again or contact us." },
       { status: 500 }
     );
   }

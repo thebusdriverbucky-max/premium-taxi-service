@@ -3,7 +3,7 @@
 import { useState, useEffect, useTransition } from 'react';
 import { useForm } from 'react-hook-form';
 import { getSettings, updateSettings, StoreSettingsData } from '@/app/actions/settings';
-import { getPages, updatePage, ContentPageData, createMissingCMSPages } from '@/app/actions/cms';
+import { getPages, updatePage, ContentPageData, createMissingCMSPages, togglePageVisibility } from '@/app/actions/cms';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
@@ -13,6 +13,8 @@ import { toast } from 'sonner';
 import { Edit, Plus, Upload, X, HelpCircle, Trash2, Eye, EyeOff } from 'lucide-react';
 import { CldUploadWidget } from 'next-cloudinary';
 import FaqTable from '@/components/admin/FaqTable';
+import { cmsSlugs } from '@/lib/cms-validation';
+import type { stripeConfiguration } from '@/lib/payment-availability';
 import { Dialog } from '@/components/ui/Dialog';
 
 const CURRENCIES = ['USD', 'EUR', 'GBP', 'CAD', 'AUD'];
@@ -283,6 +285,8 @@ export default function SettingsPage() {
   });
 
   const { register, handleSubmit, setValue, watch, reset } = useForm<StoreSettingsData>();
+  const [settingsErrors, setSettingsErrors] = useState<Record<string, string>>({});
+  const [stripeStatus, setStripeStatus] = useState<ReturnType<typeof stripeConfiguration> | null>(null);
   const cmsForm = useForm<ContentPageData>();
 
   const loadSettings = async () => {
@@ -290,6 +294,7 @@ export default function SettingsPage() {
     if (res.success && res.data) {
       const data = res.data as unknown as StoreSettingsData;
       setSettings(data);
+      setStripeStatus(res.stripeConfiguration ?? null);
       setValue('companyName', data.companyName || '');
       setValue('storeEmail', data.storeEmail || '');
       setValue('currency', data.currency);
@@ -318,8 +323,8 @@ export default function SettingsPage() {
       setValue('logoUrl', data.logoUrl || '');
       setValue('mapCountryCode', data.mapCountryCode || 'GB');
       setValue('mapDefaultZoom', data.mapDefaultZoom || 12);
-      setValue('mapCenterLat', data.mapCenterLat || 51.5074);
-      setValue('mapCenterLng', data.mapCenterLng || -0.1278);
+      setValue('mapCenterLat', data.mapCenterLat ?? 51.5074);
+      setValue('mapCenterLng', data.mapCenterLng ?? -0.1278);
       setValue('enableCardPayment', data.enableCardPayment ?? true);
       setValue('enableCashPayment', data.enableCashPayment ?? true);
       setValue('familyTitle', data.familyTitle || '');
@@ -383,6 +388,7 @@ export default function SettingsPage() {
 
 
   const onSettingsSubmit = (data: StoreSettingsData) => {
+    setSettingsErrors({});
     startTransition(async () => {
       const res = await updateSettings({
         ...data,
@@ -415,7 +421,8 @@ export default function SettingsPage() {
         toast.success('Settings updated successfully');
         loadSettings();
       } else {
-        toast.error('Failed to update settings');
+        setSettingsErrors(res.fieldErrors ?? { form: res.error || 'Failed to update settings' });
+        toast.error(res.error || 'Failed to update settings');
       }
     });
   };
@@ -433,7 +440,8 @@ export default function SettingsPage() {
         cmsForm.reset();
         loadPages();
       } else {
-        toast.error('Failed to save page');
+        for (const [field, message] of Object.entries(res.fieldErrors ?? {})) cmsForm.setError(field as keyof ContentPageData, { message });
+        toast.error(res.error || 'Failed to save page');
       }
     });
   };
@@ -576,8 +584,14 @@ export default function SettingsPage() {
         </button>
       </div>
 
+      {Object.keys(settingsErrors).length > 0 && (
+        <div role="alert" className="mb-6 p-4 border border-red-400 rounded-xl text-red-300">
+          <p>Please correct these settings (contact email is in General Settings):</p>
+          <ul>{Object.entries(settingsErrors).map(([field, message]) => <li key={field}>{field}: {message}</li>)}</ul>
+        </div>
+      )}
       {activeTab === 'branding' && (
-        <form onSubmit={handleSubmit(onSettingsSubmit)} className="space-y-6 bg-white/5 p-8 rounded-3xl shadow-2xl border border-white/10 backdrop-blur-md">
+        <form noValidate onSubmit={handleSubmit(onSettingsSubmit)} className="space-y-6 bg-white/5 p-8 rounded-3xl shadow-2xl border border-white/10 backdrop-blur-md">
 
           {/* Hero Section */}
           <div>
@@ -982,7 +996,7 @@ export default function SettingsPage() {
       )}
 
       {activeTab === 'general' && (
-        <form onSubmit={handleSubmit(onSettingsSubmit)} className="space-y-6 bg-white/5 p-8 rounded-3xl shadow-2xl border border-white/10 backdrop-blur-md">
+        <form noValidate onSubmit={handleSubmit(onSettingsSubmit)} className="space-y-6 bg-white/5 p-8 rounded-3xl shadow-2xl border border-white/10 backdrop-blur-md">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
               <label className="block text-sm font-medium text-white/90 mb-2">Company Name</label>
@@ -993,7 +1007,7 @@ export default function SettingsPage() {
             </div>
             <div>
               <label className="block text-sm font-medium text-white/90 mb-2">Contact Email</label>
-              <Input type="email" {...register('storeEmail')} placeholder="support@taxi-service.com" />
+              <Input type="email" {...register('storeEmail')} error={settingsErrors.storeEmail} helperText="Optional. Public contact email and notification recipient. Blank hides the public email; server ADMIN_EMAIL is the private delivery fallback." placeholder="support@taxi-service.com" />
               <p className="text-xs text-gray-500 mt-2">
                 Used in booking confirmation emails and customer support
               </p>
@@ -1123,6 +1137,11 @@ export default function SettingsPage() {
               <h4 className="text-md font-semibold text-white/80 mb-4 flex items-center gap-2">
                 💳 Payment Methods
               </h4>
+              <p className="text-sm text-gray-300 mb-4" role="status">
+                {stripeStatus?.configured ? 'Stripe server variables are present. Credentials and webhook delivery still require a test payment.' : 'Card payments are unavailable: server Stripe configuration is incomplete.'}
+                {stripeStatus && Object.entries(stripeStatus.present).map(([name, present]) => <span className="block" key={name}>{name}: {String(present)}</span>)}
+                This switch alone does not configure Stripe. Cash does not require Stripe.
+              </p>
               <div className="flex flex-wrap gap-8">
                 <label className="flex items-center gap-3 cursor-pointer group">
                   <input
@@ -1265,9 +1284,16 @@ export default function SettingsPage() {
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-white">
                       {page.title}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-400">{page.slug}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-400">/{page.slug} — {page.isVisible ? "Published" : "Hidden"}</td>
                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                      <span className="mr-3 text-gray-400">{cmsSlugs.includes(page.slug) ? (page.isVisible ? 'Published' : 'Hidden') : 'No public route — unsupported legacy page'}</span>
+                      <button type="button" disabled={!cmsSlugs.includes(page.slug)} className="mr-3" onClick={async () => {
+                        const result = await togglePageVisibility(page.id, !page.isVisible);
+                        if (result.success) loadPages(); else toast.error(result.error);
+                      }}>{page.isVisible ? 'Hide' : 'Publish'}</button>
                       <button
+                        disabled={!cmsSlugs.includes(page.slug)}
+                        aria-label={`Edit ${page.title}`}
                         onClick={() => handleEditPage(page)}
                         className="text-taxi-gold hover:text-taxi-gold/80 transition-colors"
                       >
@@ -1292,10 +1318,10 @@ export default function SettingsPage() {
       <Modal
         open={isModalOpen}
         onOpenChange={setIsModalOpen}
-        title={editingPage?.slug === 'faq' ? "Manage FAQ Items" : "Edit Page"}
+        title="Edit Page"
         size={editingPage?.slug === 'faq' ? "2xl" : "md"}
       >
-        {editingPage?.slug === 'faq' ? (
+        {editingPage?.slug === 'faq' && (
           <div className="space-y-6">
             <div className="flex justify-between items-center">
               <h3 className="text-white font-medium">Question List</h3>
@@ -1318,21 +1344,22 @@ export default function SettingsPage() {
               </Button>
             </div>
           </div>
-        ) : (
-          <form onSubmit={cmsForm.handleSubmit(onPageSubmit)} className="space-y-6">
+        )}
+          <form noValidate onSubmit={cmsForm.handleSubmit(onPageSubmit)} className="space-y-6">
             <div className="max-h-[60vh] overflow-y-auto pr-2 space-y-6">
+              <p className="text-sm text-gray-300">Plain text; line breaks are preserved. Contact details come from General Settings, not this text. FAQ content is an introduction above the separate question list. Legal pages must be reviewed before launch.</p>
               <div>
                 <label className="block text-sm font-medium text-white/90 mb-2">Title</label>
-                <Input {...cmsForm.register('title', { required: true })} placeholder="Page Title" />
+                <Input {...cmsForm.register('title', { required: 'Title is required' })} error={cmsForm.formState.errors.title?.message} placeholder="Page Title" />
               </div>
               <div>
                 <label className="block text-sm font-medium text-white/90 mb-2">Slug</label>
-                <Input {...cmsForm.register('slug', { required: true })} placeholder="page-slug" disabled />
+                <Input {...cmsForm.register('slug', { required: true })} placeholder="page-slug" readOnly />
               </div>
               <div>
                 <label className="block text-sm font-medium text-white/90 mb-2">Content</label>
                 <Textarea
-                  {...cmsForm.register('content', { required: true })}
+                  {...cmsForm.register('content', { required: 'Content is required' })} error={cmsForm.formState.errors.content?.message}
                   placeholder="Page content"
                   className="min-h-[300px]"
                 />
@@ -1351,7 +1378,6 @@ export default function SettingsPage() {
               </Button>
             </div>
           </form>
-        )}
       </Modal>
 
       {/* FAQ Item Form Dialog */}

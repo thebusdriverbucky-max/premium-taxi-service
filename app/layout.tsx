@@ -14,6 +14,7 @@ import { TopContactBar } from "@/components/top-contact-bar";
 import { Analytics } from "@vercel/analytics/react";
 import { db as prisma } from "@/lib/db";
 import { SettingsProvider } from "@/components/providers/settings-provider";
+import { isStripeConfigured } from "@/lib/stripe";
 import { publicStoreSettingsSelect } from "@/lib/public-settings";
 
 const inter = Inter({ subsets: ["latin"] });
@@ -84,7 +85,7 @@ export default async function RootLayout({
     <html lang={siteLang} suppressHydrationWarning>
       <body className={inter.className}>
         <SessionProvider>
-          <SettingsProvider initialSettings={settings}>
+          <SettingsProvider initialSettings={settings} cardPaymentsConfigured={isStripeConfigured()}>
             <ThemeProvider attribute="class" defaultTheme="dark" forcedTheme="dark" enableSystem={false}>
               <div className="flex flex-col min-h-screen bg-taxi-dark-navy text-white">
                 <TopContactBar />

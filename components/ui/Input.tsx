@@ -12,7 +12,9 @@ export interface InputProps
 
 const Input = React.forwardRef<HTMLInputElement, InputProps>(
   ({ className, type, error, label, helperText, id, ...props }, ref) => {
-    const inputId = id || props.name;
+    const generatedId = React.useId();
+    const inputId = id || props.name || generatedId;
+    const descriptionId = `${inputId}-description`;
 
     return (
       <div className="w-full">
@@ -32,12 +34,14 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
           ref={ref}
           id={inputId}
           {...props}
+          aria-invalid={error ? true : props['aria-invalid']}
+          aria-describedby={[props['aria-describedby'], (error || helperText) && descriptionId].filter(Boolean).join(' ') || undefined}
         />
         {error && (
-          <p className="text-xs text-red-600 mt-1">{error}</p>
+          <p id={descriptionId} role="alert" className="text-xs text-red-400 mt-1">{error}</p>
         )}
         {helperText && !error && (
-          <p className="text-xs text-gray-500 mt-1">{helperText}</p>
+          <p id={descriptionId} className="text-xs text-gray-500 mt-1">{helperText}</p>
         )}
       </div>
     );

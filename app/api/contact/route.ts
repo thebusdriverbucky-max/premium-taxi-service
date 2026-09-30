@@ -27,7 +27,10 @@ export async function POST(request: NextRequest) {
     const { name, email, subject, message } = contactSchema.parse(body);
 
     const storeSettings = await db.storeSettings.findFirst();
-    const adminEmail = storeSettings?.storeEmail || process.env.ADMIN_EMAIL || "admin@example.com";
+    const adminEmail = storeSettings?.storeEmail?.trim() || process.env.ADMIN_EMAIL?.trim();
+    if (!adminEmail || !z.string().email().safeParse(adminEmail).success) {
+      return NextResponse.json({ error: "Contact message delivery is not configured. Please use another contact method." }, { status: 503 });
+    }
     const companyName = storeSettings?.companyName || "Taxi Service";
 
     // Send email to admin

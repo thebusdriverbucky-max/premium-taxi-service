@@ -10,14 +10,7 @@ import { useRouter } from "next/navigation";
 import LocationAutocomplete from "@/components/location-autocomplete";
 import { useSettings } from "@/components/providers/settings-provider";
 
-const bookingSchema = z.object({
-  pickup: z.string().min(2, "Pickup location is required"),
-  pickupCoords: z.object({ lat: z.number(), lng: z.number(), placeId: z.string().optional() }),
-  dropoff: z.string().min(2, "Dropoff location is required"),
-  dropoffCoords: z.object({ lat: z.number(), lng: z.number(), placeId: z.string().optional() }),
-  date: z.string().refine((val) => new Date(val) > new Date(), "Date must be in the future"),
-  phone: z.string().min(8, "Valid phone number is required"),
-});
+import { bookingDraftSchema as bookingSchema } from "@/lib/booking-draft";
 
 type BookingFormData = z.infer<typeof bookingSchema>;
 
@@ -38,10 +31,11 @@ export function BookingForm() {
 
   const onSubmit = (data: BookingFormData) => {
     const bookingData = {
+      version: 2,
       pickup: data.pickup,
-      pickupCoords: data.pickupCoords,
+      pickupCoords: { ...data.pickupCoords, address: data.pickup },
       dropoff: data.dropoff,
-      dropoffCoords: data.dropoffCoords,
+      dropoffCoords: { ...data.dropoffCoords, address: data.dropoff },
       date: data.date,
       time: new Date(data.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }),
       phone: data.phone
@@ -60,7 +54,7 @@ export function BookingForm() {
             Book Your Ride
           </h2>
 
-          <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
+          <form noValidate onSubmit={handleSubmit(onSubmit)} className="space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="space-y-2">
                 <Controller
@@ -81,7 +75,7 @@ export function BookingForm() {
                           setValue("pickupCoords", undefined as never, { shouldValidate: true });
                         }
                       }}
-                      error={errors.pickup?.message}
+                      error={errors.pickup?.message || (errors.pickupCoords && "Select a pickup location from the suggestions")}
                       required
                     />
                   )}
@@ -106,7 +100,7 @@ export function BookingForm() {
                           setValue("dropoffCoords", undefined as never, { shouldValidate: true });
                         }
                       }}
-                      error={errors.dropoff?.message}
+                      error={errors.dropoff?.message || (errors.dropoffCoords && "Select a dropoff location from the suggestions")}
                       required
                     />
                   )}
@@ -120,19 +114,21 @@ export function BookingForm() {
                 <Input
                   type="datetime-local"
                   {...register("date")}
+                  aria-label="Pickup date and time"
+                  error={errors.date?.message}
                   className="bg-taxi-dark-navy text-white text-left placeholder:text-gray-400 border-taxi-gold-DEFAULT/30 focus:border-taxi-gold-DEFAULT focus:ring-taxi-gold-DEFAULT [color-scheme:dark] pr-10 relative [&::-webkit-calendar-picker-indicator]:absolute [&::-webkit-calendar-picker-indicator]:right-3 [&::-webkit-calendar-picker-indicator]:top-1/2 [&::-webkit-calendar-picker-indicator]:-translate-y-1/2 [&::-webkit-calendar-picker-indicator]:cursor-pointer"
                 />
-                {errors.date && <p className="text-red-300 text-sm">{errors.date.message}</p>}
               </div>
 
               <div className="space-y-2">
                 <label className="text-sm font-medium text-taxi-white">Phone Number <span className="text-red-500">*</span></label>
                 <Input
                   {...register("phone")}
+                  aria-label="Phone number"
+                  error={errors.phone?.message}
                   placeholder="+357 ..."
                   className="bg-taxi-dark-navy text-white placeholder:text-gray-400 border-taxi-gold-DEFAULT/30 focus:border-taxi-gold-DEFAULT focus:ring-taxi-gold-DEFAULT"
                 />
-                {errors.phone && <p className="text-red-300 text-sm">{errors.phone.message}</p>}
               </div>
             </div>
 

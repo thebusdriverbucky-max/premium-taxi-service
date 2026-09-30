@@ -1,6 +1,11 @@
+import { getPageBySlug } from '@/app/actions/cms';
+import { notFound } from 'next/navigation';
 import { db } from "@/lib/db";
 
 export default async function FaqPage() {
+  const result = await getPageBySlug('faq');
+  const page = result.success ? result.data : null;
+  if (!page) notFound();
   const items = await db.faqItem.findMany({
     where: { isVisible: true },
     orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
@@ -17,9 +22,9 @@ export default async function FaqPage() {
     <div className="container mx-auto px-4 py-16 max-w-3xl">
       <div className="text-center mb-12">
         <h1 className="text-4xl font-bold mb-4 bg-taxi-gold-gradient bg-clip-text text-transparent">
-          Frequently Asked Questions
+          {page.title}
         </h1>
-        <p className="text-gray-400">Everything you need to know about our taxi service</p>
+        <div className="text-gray-400 whitespace-pre-wrap">{page.content}</div>
       </div>
 
       {Object.entries(grouped).map(([category, faqs]) => (

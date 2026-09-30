@@ -11,16 +11,8 @@ export interface ContentPageData {
   content: string;
 }
 
-const contentPageSchema = z.object({
-  slug: z.string().trim().min(1).max(100).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
-  title: z.string().trim().min(1).max(200),
-  content: z.string().trim().min(1).max(100000),
-}).strict();
-
-const contentPageUpdateSchema = contentPageSchema.partial().refine(
-  data => Object.keys(data).length > 0,
-  { message: 'At least one field is required' },
-);
+import { contentPageSchema, contentPageUpdateSchema } from '@/lib/cms-validation';
+import { validationFieldErrors } from '@/lib/validation-errors';
 
 export async function getPages() {
   try {
@@ -53,6 +45,13 @@ export async function updatePage(id: string, data: Partial<ContentPageData>) {
     await requireAdmin();
     const validatedId = z.string().cuid().parse(id);
     const validatedData = contentPageUpdateSchema.parse(data);
+    const existing = await prisma.contentPage.findUnique({ where: { id: validatedId } });
+    if (!existing || !contentPageSchema.shape.slug.safeParse(existing.slug).success) {
+      return { success: false, error: 'This page has no supported public route' };
+    }
+    if (validatedData.slug && validatedData.slug !== existing.slug) {
+      return { success: false, error: 'Page URL cannot be changed', fieldErrors: { slug: 'Page URL cannot be changed' } };
+    }
     await prisma.contentPage.update({
       where: { id: validatedId },
       data: validatedData,
@@ -60,7 +59,8 @@ export async function updatePage(id: string, data: Partial<ContentPageData>) {
     revalidatePath('/', 'layout');
     return { success: true };
   } catch (error) {
-    console.error('Error updating page:', error);
+    if (error instanceof z.ZodError) return { success: false, error: 'Please correct the page fields', fieldErrors: validationFieldErrors(error.issues) };
+    console.error('Error updating page');
     return { success: false, error: 'Failed to update page' };
   }
 }

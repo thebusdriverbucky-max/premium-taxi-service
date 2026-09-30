@@ -81,15 +81,15 @@ export const bookingRoutePointSchema = z.object({
 }).strict();
 
 export const bookingPassengerSchema = z.object({
-  name: z.string().trim().min(2).max(120),
+  name: z.string().trim().min(2, "Enter a name with at least 2 characters").max(120),
   email: z.preprocess(
     value => typeof value === "string" && value.trim() === "" ? undefined : value,
-    z.string().trim().email().max(254).transform(value => value.toLowerCase()).optional(),
+    z.string().trim().email("Enter a valid email address or leave it blank").max(254).transform(value => value.toLowerCase()).optional(),
   ),
   phone: z.string()
     .trim()
-    .min(5)
-    .max(25)
+    .min(5, "Enter a phone number with at least 5 characters")
+    .max(25, "Phone number must contain at most 25 characters")
     .regex(/^\+?[\d\s\-()]{5,25}$/, "Invalid phone number format"),
   count: z.number().int().min(1).max(50),
 }).strict();
@@ -109,7 +109,9 @@ export const createBookingSchema = z.object({
   tariffPlanId: z.string().cuid(),
   pickup: bookingRoutePointSchema,
   dropoff: bookingRoutePointSchema,
-  pickupDateTime: z.string().datetime({ offset: true }),
+  pickupDateTime: z.string().datetime({ offset: true, message: "Enter a valid pickup date and time" }).refine(
+    value => Date.parse(value) > Date.now(), "Pickup date and time must be in the future",
+  ),
   passenger: bookingPassengerSchema,
   extras: bookingExtrasSchema.default({}),
   flightNumber: z.string().trim().max(50).optional(),

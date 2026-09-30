@@ -6,6 +6,7 @@ import type { PublicStoreSettings } from "@/lib/public-settings";
 interface SettingsContextType {
   settings: PublicStoreSettings | null;
   currency: string;
+  cardPaymentsConfigured: boolean;
 }
 
 const SettingsContext = createContext<SettingsContextType | undefined>(undefined);
@@ -13,14 +14,16 @@ const SettingsContext = createContext<SettingsContextType | undefined>(undefined
 export function SettingsProvider({
   children,
   initialSettings,
+  cardPaymentsConfigured = false,
 }: {
   children: ReactNode;
   initialSettings: PublicStoreSettings | null;
+  cardPaymentsConfigured?: boolean;
 }) {
   const currency = initialSettings?.currency || "USD";
 
   return (
-    <SettingsContext.Provider value={{ settings: initialSettings, currency }}>
+    <SettingsContext.Provider value={{ settings: initialSettings, currency, cardPaymentsConfigured }}>
       {children}
     </SettingsContext.Provider>
   );

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/Button";
@@ -9,16 +9,14 @@ import LocationAutocomplete from "@/components/location-autocomplete";
 import BookingMap from "@/components/booking-map";
 import { TariffPlan } from "@prisma/client";
 import { TariffZone } from "@/types/tariff";
-import { ChevronDown, ArrowRight, Info } from "lucide-react";
+import { ArrowRight, Info } from "lucide-react";
 import { useSettings } from "@/components/providers/settings-provider";
 import { calculatePrice, decimalToMinor, type PricingZone } from "@/lib/pricing";
 
-interface SelectedLocation {
-  address: string;
-  latitude: number;
-  longitude: number;
-  placeId?: string;
-}
+import { selectedLocation, restoreDraftLocation, routeKey, localDate, type SelectedLocation, type RouteMetrics } from "@/lib/booking-location";
+import { createBookingSchema } from "@/lib/validations";
+import { validationFieldErrors } from "@/lib/validation-errors";
+import { paymentAvailability } from "@/lib/payment-availability";
 
 // Fallback UI components if shadcn/ui ones are missing or different
 const SimpleCheckbox = ({ checked, onCheckedChange, id }: { checked: boolean; onCheckedChange: (c: boolean) => void; id: string }) => (
@@ -31,49 +29,20 @@ const SimpleCheckbox = ({ checked, onCheckedChange, id }: { checked: boolean; on
   />
 );
 
-const CustomSelect = ({ value, onChange, options, className = "" }: { value: string | number, onChange: (val: string) => void, options: { label: string, value: string | number }[], className?: string }) => {
-  const [isOpen, setIsOpen] = useState(false);
-
-  return (
-    <div className="relative w-full">
-      <div
-        className={`flex h-12 w-full rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm text-white justify-between items-center cursor-pointer focus:outline-none focus:ring-2 focus:ring-taxi-gold-DEFAULT/50 focus:border-transparent transition-all duration-200 ${className}`}
-        onClick={() => setIsOpen(!isOpen)}
-      >
-        <span>{options.find(o => String(o.value) === String(value))?.label || value}</span>
-        <ChevronDown className="w-4 h-4 text-gray-400" />
-      </div>
-      {isOpen && (
-        <>
-          <div className="fixed inset-0 z-40" onClick={() => setIsOpen(false)} />
-          <div className="absolute z-50 w-full mt-1 bg-taxi-dark-navy border border-white/20 rounded-xl shadow-lg max-h-60 overflow-auto py-1">
-            {options.map((option) => (
-              <div
-                key={option.value}
-                className="px-4 py-2 text-white text-sm hover:bg-white/10 cursor-pointer"
-                onClick={() => {
-                  onChange(String(option.value));
-                  setIsOpen(false);
-                }}
-              >
-                {option.label}
-              </div>
-            ))}
-          </div>
-        </>
-      )}
-    </div>
-  );
-};
+const CustomSelect = ({ value, onChange, options, className = "" }: { value: string | number, onChange: (val: string) => void, options: { label: string, value: string | number }[], className?: string }) => (
+  <select value={value} onChange={event => onChange(event.target.value)} className={`h-12 w-full rounded-xl border border-white/10 bg-taxi-dark-navy px-4 text-white ${className}`}>
+    {options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+  </select>
+);
 
 export default function BookingPage() {
   const router = useRouter();
-  const { settings } = useSettings();
+  const { settings, cardPaymentsConfigured } = useSettings();
 
   // Map Settings
   const mapCountryCode = settings?.mapCountryCode || "cy";
   const mapCenter = useMemo(() => {
-    if (settings?.mapCenterLat && settings?.mapCenterLng) {
+    if (settings?.mapCenterLat != null && settings?.mapCenterLng != null) {
       return { lat: settings.mapCenterLat, lng: settings.mapCenterLng };
     }
     return undefined;
@@ -81,8 +50,7 @@ export default function BookingPage() {
   const mapZoom = settings?.mapDefaultZoom || 10;
 
   // Payment Settings
-  const enableCard = settings?.enableCardPayment !== false; // Default to true if not set
-  const enableCash = settings?.enableCashPayment !== false; // Default to true if not set
+  const { card: enableCard, cash: enableCash } = paymentAvailability(settings, cardPaymentsConfigured);
   const onlyOnePayment = (enableCard && !enableCash) || (!enableCard && enableCash);
 
   // Tariff Plans
@@ -110,7 +78,13 @@ export default function BookingPage() {
   const [flightNumber, setFlightNumber] = useState("");
   const [notes, setNotes] = useState("");
   const [paymentMethod, setPaymentMethod] = useState<"STRIPE" | "CASH">("STRIPE");
-  const [bookingRequestId, setBookingRequestId] = useState(() => crypto.randomUUID());
+  const requestIdentity = useRef({ fingerprint: '', id: crypto.randomUUID() });
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const errorSummary = useRef<HTMLDivElement>(null);
+  const showErrors = (errors: Record<string, string>) => {
+    setFieldErrors(errors);
+    requestAnimationFrame(() => errorSummary.current?.focus());
+  };
 
   // Auto-select payment method if only one is enabled
   useEffect(() => {
@@ -148,10 +122,18 @@ export default function BookingPage() {
     childrenFee: 0,
   });
 
-  const handleRouteChange = useCallback((route: { distanceMeters: number; durationSeconds: number }) => {
-    setDistanceKm(route.distanceMeters / 1_000);
-    setDurationMinutes(route.durationSeconds / 60);
-  }, []);
+  const currentRouteKey = routeKey(pickupLocation, dropoffLocation);
+  const latestRouteKey = useRef(currentRouteKey);
+  latestRouteKey.current = currentRouteKey;
+  const [routeState, setRouteState] = useState<{ key: string; metrics: RouteMetrics | null; error?: string } | null>(null);
+  const routeReady = routeState?.key === currentRouteKey && Boolean(routeState.metrics) &&
+    pickupLocation?.address === pickup && dropoffLocation?.address === dropoff;
+  const handleRouteChange = useCallback((route: RouteMetrics | null, error?: string) => {
+    if (latestRouteKey.current !== currentRouteKey) return;
+    setRouteState({ key: currentRouteKey, metrics: route, error });
+    setDistanceKm(route ? route.distanceMeters / 1_000 : 0);
+    setDurationMinutes(route ? route.durationSeconds / 60 : 0);
+  }, [currentRouteKey]);
 
   const handleApplyCoupon = async () => {
     if (!couponCode.trim()) return;
@@ -224,31 +206,18 @@ export default function BookingPage() {
     if (savedData) {
       try {
         const parsed = JSON.parse(savedData);
-        if (parsed.pickup) {
+        if (typeof parsed.pickup === "string" && parsed.pickup) {
           setPickup(parsed.pickup);
-          if (Number.isFinite(parsed.pickupCoords?.lat) && Number.isFinite(parsed.pickupCoords?.lng)) {
-            setPickupLocation({
-              address: parsed.pickup,
-              latitude: parsed.pickupCoords.lat,
-              longitude: parsed.pickupCoords.lng,
-              placeId: parsed.pickupCoords.placeId,
-            });
-          }
+          setPickupLocation(restoreDraftLocation(parsed.version, parsed.pickup, parsed.pickupCoords));
         }
-        if (parsed.dropoff) {
+        if (typeof parsed.dropoff === "string" && parsed.dropoff) {
           setDropoff(parsed.dropoff);
-          if (Number.isFinite(parsed.dropoffCoords?.lat) && Number.isFinite(parsed.dropoffCoords?.lng)) {
-            setDropoffLocation({
-              address: parsed.dropoff,
-              latitude: parsed.dropoffCoords.lat,
-              longitude: parsed.dropoffCoords.lng,
-              placeId: parsed.dropoffCoords.placeId,
-            });
-          }
+          setDropoffLocation(restoreDraftLocation(parsed.version, parsed.dropoff, parsed.dropoffCoords));
         }
         if (parsed.date) {
           const d = new Date(parsed.date);
-          setDate(d.toISOString().split('T')[0]);
+          if (!Number.isFinite(d.getTime())) throw new Error("Invalid saved date");
+          setDate(localDate(d));
           setTime(d.toTimeString().split(' ')[0].substring(0, 5));
         }
         if (parsed.phone) setPhone(parsed.phone);
@@ -261,7 +230,7 @@ export default function BookingPage() {
   // Pricing Logic
   useEffect(() => {
     const selectedTariff = tariffs.find(t => t.id === selectedTariffId);
-    if (!selectedTariff) return;
+    if (!selectedTariff || !routeReady) { setPrice(0); setDiscountAmount(0); return; }
 
     const BASE = Number(selectedTariff.basePrice);
     const RATE_PER_KM = Number(selectedTariff.pricePerKm);
@@ -317,30 +286,30 @@ export default function BookingPage() {
     } catch (error) {
       console.error("Unable to calculate booking price:", error);
     }
-  }, [distanceKm, durationMinutes, pickup, dropoff, hasLuggage, luggageQty, hasChildren, childrenQty, selectedTariffId, tariffs, appliedCoupon, settings]);
+  }, [routeReady, distanceKm, durationMinutes, pickup, dropoff, hasLuggage, luggageQty, hasChildren, childrenQty, selectedTariffId, tariffs, appliedCoupon, settings]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!name || !phone || !pickup || !dropoff || !date || !time || !selectedTariffId) {
-      toast.error("Please fill in all required fields");
-      return;
-    }
-
-    if (!pickupLocation || !dropoffLocation) {
-      toast.error("Please select pickup and dropoff locations from the suggestions");
-      return;
-    }
-
-    setIsSubmitting(true);
+    if (isSubmitting) return;
+    const selectionErrors: Record<string, string> = {};
+    if (!pickupLocation || pickupLocation.address !== pickup) selectionErrors.pickup = 'Select a pickup location from the suggestions';
+    if (!dropoffLocation || dropoffLocation.address !== dropoff) selectionErrors.dropoff = 'Select a dropoff location from the suggestions';
+    if (!date || !time) selectionErrors.pickupDateTime = 'Enter both pickup date and time';
+    if (!selectedTariffId) selectionErrors.tariffPlanId = 'Select an available vehicle type';
+    if (!routeReady) selectionErrors.route = 'Select both locations and wait for a valid driving route';
+    if ((paymentMethod === 'STRIPE' && !enableCard) || (paymentMethod === 'CASH' && !enableCash)) selectionErrors.paymentMethod = 'Selected payment method is unavailable';
+    if (selectedTariff && passengerCount > selectedTariff.maxPassengers) selectionErrors['passenger.count'] = `This vehicle allows at most ${selectedTariff.maxPassengers} passengers`;
+    if (Object.keys(selectionErrors).length) { showErrors(selectionErrors); return; }
+    setFieldErrors({});
 
     try {
       const bookingData = {
-        bookingRequestId,
+        bookingRequestId: requestIdentity.current.id,
         tariffPlanId: selectedTariffId,
         pickup: pickupLocation,
         dropoff: dropoffLocation,
-        pickupDateTime: new Date(`${date}T${time}:00`).toISOString(),
+        pickupDateTime: Number.isFinite(new Date(`${date}T${time}:00`).getTime()) ? new Date(`${date}T${time}:00`).toISOString() : "",
         passenger: {
           name,
           email,
@@ -357,21 +326,32 @@ export default function BookingPage() {
         paymentMethod,
       };
 
+      const parsed = createBookingSchema.safeParse(bookingData);
+      if (!parsed.success) { showErrors(validationFieldErrors(parsed.error.issues)); return; }
+      // Preserve retries of an identical request, but never reuse an old booking for edited input.
+      const fingerprint = JSON.stringify({ ...parsed.data, bookingRequestId: undefined });
+      if (requestIdentity.current.fingerprint !== fingerprint) {
+        requestIdentity.current = { fingerprint, id: crypto.randomUUID() };
+      }
+      parsed.data.bookingRequestId = requestIdentity.current.id;
+      setIsSubmitting(true);
+
       const response = await fetch("/api/trips", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(bookingData),
+        body: JSON.stringify(parsed.data),
       });
 
       const result = await response.json();
 
       if (!response.ok) {
-        throw new Error(result.error || "Failed to create order");
+        showErrors(result.fieldErrors || { form: result.error || "Failed to create order" });
+        return;
       }
 
       toast.success("Booking created successfully!");
       localStorage.removeItem("bookingData");
-      setBookingRequestId(crypto.randomUUID());
+      requestIdentity.current = { fingerprint: "", id: crypto.randomUUID() };
 
       if (result.url) {
         window.location.href = result.url;
@@ -380,13 +360,13 @@ export default function BookingPage() {
       }
     } catch (error: any) {
       console.error("Booking error:", error);
-      toast.error(error.message || "Something went wrong");
+      showErrors({ form: error.message || "Something went wrong" });
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const today = new Date().toISOString().split('T')[0];
+  const today = localDate(new Date());
 
   const minTime = date === today
     ? new Date().toTimeString().split(' ')[0].substring(0, 5)
@@ -401,7 +381,11 @@ export default function BookingPage() {
 
         <div className="flex flex-col lg:flex-row gap-8">
           {/* Left Column: Form (60%) */}
-          <form onSubmit={handleSubmit} className="w-full lg:w-[60%] space-y-8">
+          <form noValidate onSubmit={handleSubmit} className="w-full lg:w-[60%] space-y-8">
+            <div ref={errorSummary} tabIndex={-1} role="alert" aria-live="assertive">
+              {Object.keys(fieldErrors).length > 0 && <div className="border border-red-400 rounded-xl p-4 text-red-300"><p>Please correct the following:</p><ul>{Object.entries(fieldErrors).map(([field, message]) => <li key={field}>{field}: {message}</li>)}</ul></div>}
+            </div>
+            <fieldset disabled={isSubmitting} className="space-y-8" onClickCapture={e => { if (isSubmitting) { e.preventDefault(); e.stopPropagation(); } }}>
 
             {/* Tariff Selection */}
             <section className="bg-white/5 p-6 rounded-xl border border-white/10">
@@ -438,6 +422,8 @@ export default function BookingPage() {
                 <div>
                   <label className="block text-sm text-gray-400 mb-1">Full Name <span className="text-red-500">*</span></label>
                   <Input
+                    aria-label="Full name"
+                    error={fieldErrors["passenger.name"]}
                     value={name}
                     onChange={(e) => setName(e.target.value)}
                     placeholder="John Doe"
@@ -448,6 +434,8 @@ export default function BookingPage() {
                 <div>
                   <label className="block text-sm text-gray-400 mb-1">Phone Number <span className="text-red-500">*</span></label>
                   <Input
+                    aria-label="Phone number"
+                    error={fieldErrors["passenger.phone"]}
                     value={phone}
                     onChange={(e) => setPhone(e.target.value)}
                     placeholder="+357 ..."
@@ -459,6 +447,8 @@ export default function BookingPage() {
                   <label className="block text-sm text-gray-400 mb-1">Email Address</label>
                   <Input
                     type="email"
+                    aria-label="Email address"
+                    error={fieldErrors["passenger.email"]}
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     placeholder="john@example.com"
@@ -468,31 +458,19 @@ export default function BookingPage() {
               </div>
             </section>
 
-            {/* Mobile Map (Hidden on Desktop) */}
-            <div className="lg:hidden w-full my-6">
-              <BookingMap
-                pickup={pickup}
-                dropoff={dropoff}
-                onRouteChange={handleRouteChange}
-                mapCenter={mapCenter}
-                mapZoom={mapZoom}
-                className="!min-h-[300px] !h-[300px] !border-taxi-gold-DEFAULT/40 !rounded-xl"
-              />
-            </div>
-
             {/* Trip Details */}
             <section className="bg-white/5 p-6 rounded-xl border border-white/10">
               <h2 className="text-xl font-semibold mb-4 text-taxi-gold-DEFAULT">Trip Details</h2>
               <div className="space-y-4">
                 <LocationAutocomplete
                   label="Pickup Location"
+                  error={fieldErrors.pickup}
                   placeholder="Enter pickup location"
                   value={pickup}
                   onChange={(address, latitude, longitude, placeId) => {
+                    setRouteState(null);
                     setPickup(address);
-                    setPickupLocation(latitude !== undefined && longitude !== undefined
-                      ? { address, latitude, longitude, placeId }
-                      : null);
+                    setPickupLocation(selectedLocation(address, latitude, longitude, placeId));
                   }}
                   required
                   pinned={true}
@@ -500,13 +478,13 @@ export default function BookingPage() {
                 />
                 <LocationAutocomplete
                   label="Dropoff Location"
+                  error={fieldErrors.dropoff}
                   placeholder="Enter dropoff location"
                   value={dropoff}
                   onChange={(address, latitude, longitude, placeId) => {
+                    setRouteState(null);
                     setDropoff(address);
-                    setDropoffLocation(latitude !== undefined && longitude !== undefined
-                      ? { address, latitude, longitude, placeId }
-                      : null);
+                    setDropoffLocation(selectedLocation(address, latitude, longitude, placeId));
                   }}
                   required
                   mapCountryCode={mapCountryCode}
@@ -516,7 +494,9 @@ export default function BookingPage() {
                     <label className="block text-sm text-gray-400 mb-1">Date <span className="text-red-500">*</span></label>
                     <Input
                       type="date"
-                      value={date}
+                      aria-label="Pickup date"
+                    error={fieldErrors["pickupDateTime"]}
+                    value={date}
                       min={today}
                       onChange={(e) => setDate(e.target.value)}
                       className="bg-white/10 border-white/20 text-white [color-scheme:dark]"
@@ -527,7 +507,9 @@ export default function BookingPage() {
                     <label className="block text-sm text-gray-400 mb-1">Time <span className="text-red-500">*</span></label>
                     <Input
                       type="time"
-                      value={time}
+                      aria-label="Pickup time"
+                    error={fieldErrors["pickupDateTime"]}
+                    value={time}
                       min={minTime}
                       onChange={(e) => setTime(e.target.value)}
                       className="bg-white/10 border-white/20 text-white [color-scheme:dark]"
@@ -641,6 +623,8 @@ export default function BookingPage() {
             <section className="bg-white/5 p-6 rounded-xl border border-white/10">
               <h2 className="text-xl font-semibold mb-4 text-taxi-gold-DEFAULT">Payment Method</h2>
 
+              {!enableCard && <p className="text-sm text-gray-300 mb-3">Card payments are currently unavailable.</p>}
+              {!enableCard && !enableCash && <p role="alert" className="text-red-300">Online booking is unavailable: no payment method is available. Please contact us.</p>}
               {onlyOnePayment ? (
                 <div className="flex items-center gap-3 p-4 rounded-lg bg-[#BF953F]/10 border border-[#BF953F]/30 text-gray-200">
                   <Info className="w-5 h-5 text-[#BF953F]" />
@@ -722,13 +706,14 @@ export default function BookingPage() {
             {/* Pricing Breakdown */}
             <section className="bg-taxi-navy/50 p-6 rounded-xl border border-taxi-gold-DEFAULT/30">
               <h2 className="text-xl font-semibold mb-4 text-taxi-gold-DEFAULT">Price Breakdown</h2>
-              <div className="space-y-2 text-sm text-gray-300">
+              {!routeReady && <p role="status" className="text-gray-300">{routeState?.key === currentRouteKey && routeState.error ? routeState.error : 'Select both locations to calculate the route and estimate.'}</p>}
+              {routeReady && <div className="space-y-2 text-sm text-gray-300">
                 <div className="flex justify-between">
                   <span>Base Fare ({tariffs.find(t => t.id === selectedTariffId)?.name || "Selected Tariff"})</span>
                   <span>{currencySymbol}{breakdown.base.toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span>Distance Cost ({distanceKm.toFixed(1)} km)</span>
+                  <span>Distance Cost ({routeReady ? distanceKm.toFixed(1) : "—"} km)</span>
                   <span>{currencySymbol}{breakdown.distanceCost.toFixed(2)}</span>
                 </div>
                 {breakdown.durationCost > 0 && (
@@ -762,10 +747,10 @@ export default function BookingPage() {
                   </div>
                 )}
                 <div className="border-t border-white/10 my-2 pt-2 flex justify-between items-center">
-                  <span className="text-lg font-bold text-white">Total Price</span>
-                  <span className="text-3xl font-bold text-taxi-gold-DEFAULT">{currencySymbol}{price.toFixed(2)}</span>
+                  <span className="text-lg font-bold text-white">Estimated total (confirmed at checkout)</span>
+                  <span className="text-3xl font-bold text-taxi-gold-DEFAULT">{currencySymbol}{routeReady ? price.toFixed(2) : "—"}</span>
                 </div>
-              </div>
+              </div>}
             </section>
 
             <Button
@@ -779,14 +764,16 @@ export default function BookingPage() {
               </span>
             </Button>
 
+            </fieldset>
           </form>
 
           {/* Right Column: Map (40%) - Sticky on Desktop */}
-          <div className="hidden lg:block w-full lg:w-[40%]">
+          <div className=" w-full lg:w-[40%]">
             <div className="lg:sticky lg:top-24 h-[400px] lg:h-[calc(100vh-8rem)] rounded-xl overflow-hidden shadow-2xl border border-taxi-gold-DEFAULT/20">
               <BookingMap
-                pickup={pickup}
-                dropoff={dropoff}
+                key={currentRouteKey}
+                pickup={pickupLocation}
+                dropoff={dropoffLocation}
                 onRouteChange={handleRouteChange}
                 mapCenter={mapCenter}
                 mapZoom={mapZoom}

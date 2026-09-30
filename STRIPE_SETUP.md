@@ -139,3 +139,19 @@ Verify all of the following before launch:
 
 Monitor webhook delivery failures in Stripe Dashboard after launch. A cron
 recovery run cannot replace correct webhook configuration.
+
+## Configuration diagnostics and booking availability
+
+Admin Settings → Payment Methods shows presence-only diagnostics for the three
+server variables defined in this guide. A configured secret key alone is not
+enough: both the stable deployment marker and webhook secret must also be present.
+The admin card switch expresses business intent; it does not configure Stripe.
+Public booking offers cards only when the switch and server configuration permit
+it. Cash-only deployments do not initialize Stripe.
+
+Presence checks do not validate credentials, mode, webhook registration, or
+provider connectivity. Complete a test-mode payment and verify webhook delivery
+before enabling real payments. After changing deployment environment settings,
+restart or redeploy; do not change the deployment marker for existing payments.
+See the [bugfix and runtime-contract report](BUGFIX_REPORT.md) for regression
+coverage and remaining manual checks.

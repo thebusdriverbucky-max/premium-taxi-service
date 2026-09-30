@@ -1,7 +1,9 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef, useMemo } from "react";
-import { GoogleMap, useJsApiLoader, DirectionsService, DirectionsRenderer } from "@react-google-maps/api";
+import { useEffect, useState, useCallback, useMemo } from "react";
+import { GoogleMap, useJsApiLoader, DirectionsRenderer } from "@react-google-maps/api";
+import { latestRequest } from "@/lib/latest-request";
+import type { SelectedLocation, RouteMetrics } from "@/lib/booking-location";
 import { Loader2 } from "lucide-react";
 
 const libraries: ("places")[] = ["places"];
@@ -127,9 +129,9 @@ const darkLuxuryMapStyle = [
 ];
 
 interface BookingMapProps {
-  pickup: string;
-  dropoff: string;
-  onRouteChange: (route: { distanceMeters: number; durationSeconds: number }) => void;
+  pickup: SelectedLocation | null;
+  dropoff: SelectedLocation | null;
+  onRouteChange: (route: RouteMetrics | null, error?: string) => void;
   className?: string;
   mapCenter?: { lat: number; lng: number };
   mapZoom?: number;
@@ -143,73 +145,45 @@ export default function BookingMap({
   mapCenter,
   mapZoom = 10
 }: BookingMapProps) {
-  const { isLoaded } = useJsApiLoader({
+  const { isLoaded, loadError } = useJsApiLoader({
     googleMapsApiKey: process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || "",
     libraries,
+    language: "en",
   });
 
   const [response, setResponse] = useState<google.maps.DirectionsResult | null>(null);
-  const [map, setMap] = useState<google.maps.Map | null>(null);
   const [mapReady, setMapReady] = useState(false);
 
   const defaultCenter = useMemo(() => mapCenter || center, [mapCenter]);
 
-  // Use refs to track previous values to avoid infinite loops if props change but are effectively same
-  const prevPickup = useRef(pickup);
-  const prevDropoff = useRef(dropoff);
-
-  const directionsCallback = useCallback((
-    result: google.maps.DirectionsResult | null,
-    status: google.maps.DirectionsStatus
-  ) => {
-    if (result !== null && status === 'OK') {
-      // Only update state if the result is actually different or we don't have one yet
-      // This is a basic check; for production, might need deeper comparison
-      setResponse(prev => {
-        // If we already have a response and the route looks the same (e.g. same distance), skip update
-        // This helps prevent infinite loops if the API returns slightly different objects
-        if (prev &&
-          prev.routes[0]?.legs[0]?.distance?.value === result.routes[0]?.legs[0]?.distance?.value &&
-          prev.routes[0]?.overview_polyline === result.routes[0]?.overview_polyline) {
-          return prev;
-        }
-        return result;
-      });
-
-      const route = result.routes[0];
-      if (route && route.legs && route.legs[0] && route.legs[0].distance && route.legs[0].duration) {
-        const distanceInMeters = route.legs[0].distance.value;
-        onRouteChange({
-          distanceMeters: distanceInMeters,
-          durationSeconds: route.legs[0].duration.value,
-        });
-      }
-    } else {
-      console.error(`Directions request failed due to ${status}`);
-    }
-  }, [onRouteChange]);
-
-  const directionsOptions = useMemo(() => {
-    if (!isLoaded || !pickup || !dropoff) return null;
-    return {
-      destination: dropoff,
-      origin: pickup,
+  useEffect(() => {
+    setResponse(null);
+    if (!isLoaded || !pickup || !dropoff) return;
+    // Google Directions callbacks cannot be aborted; invalidation prevents stale commits.
+    const request = latestRequest();
+    const commit = request.start();
+    const service = new google.maps.DirectionsService();
+    service.route({
+      origin: { lat: pickup.latitude, lng: pickup.longitude },
+      destination: { lat: dropoff.latitude, lng: dropoff.longitude },
       travelMode: google.maps.TravelMode.DRIVING,
-    };
-  }, [isLoaded, pickup, dropoff]);
+    }, (result, status) => commit(() => {
+      const leg = result?.routes[0]?.legs[0];
+      if (status !== 'OK' || !leg?.distance?.value || !leg.duration?.value) {
+        setResponse(null);
+        onRouteChange(null, 'No driving route could be calculated. Select locations again or retry.');
+        return;
+      }
+      setResponse(result);
+      onRouteChange({ distanceMeters: leg.distance.value, durationSeconds: leg.duration.value });
+    }));
+    return () => request.cancel();
+  }, [isLoaded, pickup, dropoff, onRouteChange]);
 
-  const onLoad = useCallback((map: google.maps.Map) => {
-    setMap(map);
-    // Small delay to ensure map is actually rendered
-    setTimeout(() => {
-      setMapReady(true);
-    }, 500);
-  }, []);
+  const onLoad = useCallback(() => setMapReady(true), []);
+  const onUnmount = useCallback(() => setMapReady(false), []);
 
-  const onUnmount = useCallback(() => {
-    setMap(null);
-    setMapReady(false);
-  }, []);
+  if (loadError) return <div role="alert" className="p-6 text-red-300">Maps could not load. Please reload or contact us.</div>;
 
   if (!isLoaded) {
     return (
@@ -244,13 +218,6 @@ export default function BookingMap({
           zoomControl: true,
         }}
       >
-        {directionsOptions && (
-          <DirectionsService
-            options={directionsOptions}
-            callback={directionsCallback}
-          />
-        )}
-
         {response && (
           <DirectionsRenderer
             options={{
