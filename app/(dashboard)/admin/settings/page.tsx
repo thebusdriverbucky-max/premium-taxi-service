@@ -14,6 +14,7 @@ import { Edit, Plus, Upload, X, HelpCircle, Trash2, Eye, EyeOff } from 'lucide-r
 import { CldUploadWidget } from 'next-cloudinary';
 import FaqTable from '@/components/admin/FaqTable';
 import { cmsSlugs } from '@/lib/cms-validation';
+import { isCloudinaryWidgetConfigured } from '@/lib/cloudinary-widget';
 import type { stripeConfiguration } from '@/lib/payment-availability';
 import { Dialog } from '@/components/ui/Dialog';
 
@@ -599,6 +600,11 @@ export default function SettingsPage() {
               🖼️ Site Assets
               <span className="text-xs font-normal text-gray-400">(Logo, Favicon and OG Image)</span>
             </h3>
+            {!isCloudinaryWidgetConfigured && (
+              <p className="mb-4 text-sm text-gray-400">
+                Paste hosted image URLs below. Upload buttons appear after both optional Cloudinary widget values are configured.
+              </p>
+            )}
             <div className="space-y-6">
               <div className="space-y-2">
                 <label className="block text-sm font-medium text-white/90">Site Logo</label>
@@ -626,7 +632,7 @@ export default function SettingsPage() {
                         placeholder="https://res.cloudinary.com/..."
                         className="flex-1"
                       />
-                      <CldUploadWidget
+                      {isCloudinaryWidgetConfigured && <CldUploadWidget
                         uploadPreset={process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET}
                         onSuccess={(result: any) => {
                           if (result.info?.secure_url) {
@@ -645,7 +651,7 @@ export default function SettingsPage() {
                             Upload
                           </Button>
                         )}
-                      </CldUploadWidget>
+                      </CldUploadWidget>}
                     </div>
                     <p className="text-xs text-gray-500">Recommended: Transparent PNG, max height 60px</p>
                   </div>
@@ -660,7 +666,7 @@ export default function SettingsPage() {
                     placeholder="https://i.imgur.com/..."
                     className="flex-1"
                   />
-                  <CldUploadWidget
+                  {isCloudinaryWidgetConfigured && <CldUploadWidget
                     uploadPreset={process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET}
                     onSuccess={(result: any) => {
                       if (result.info?.secure_url) {
@@ -679,7 +685,7 @@ export default function SettingsPage() {
                         Upload
                       </Button>
                     )}
-                  </CldUploadWidget>
+                  </CldUploadWidget>}
                 </div>
                 <p className="text-xs text-gray-500">Recommended: 32x32 or 64x64 PNG/ICO</p>
               </div>
@@ -692,7 +698,7 @@ export default function SettingsPage() {
                     placeholder="https://res.cloudinary.com/..."
                     className="flex-1"
                   />
-                  <CldUploadWidget
+                  {isCloudinaryWidgetConfigured && <CldUploadWidget
                     uploadPreset={process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET}
                     onSuccess={(result: any) => {
                       if (result.info?.secure_url) {
@@ -711,7 +717,7 @@ export default function SettingsPage() {
                         Upload
                       </Button>
                     )}
-                  </CldUploadWidget>
+                  </CldUploadWidget>}
                 </div>
                 <p className="text-xs text-gray-500">Recommended: 1200x630 PNG/JPG for social sharing</p>
               </div>
@@ -737,14 +743,14 @@ export default function SettingsPage() {
                 <Input {...register('heroButtonText')} placeholder="Book Now" />
               </div>
               <div className="space-y-2">
-                <label className="block text-sm font-medium text-white/90">Hero Background Image URL (Cloudinary)</label>
+                <label className="block text-sm font-medium text-white/90">Hero Background Image URL</label>
                 <div className="flex gap-3">
                   <Input
                     {...register('heroImageUrl')}
                     placeholder="https://res.cloudinary.com/..."
                     className="flex-1"
                   />
-                  <CldUploadWidget
+                  {isCloudinaryWidgetConfigured && <CldUploadWidget
                     uploadPreset={process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET}
                     onSuccess={(result: any) => {
                       if (result.info?.secure_url) {
@@ -763,7 +769,7 @@ export default function SettingsPage() {
                         Upload
                       </Button>
                     )}
-                  </CldUploadWidget>
+                  </CldUploadWidget>}
                 </div>
                 <p className="text-xs text-gray-500">Recommended: 1920x1080 JPG/WebP</p>
               </div>

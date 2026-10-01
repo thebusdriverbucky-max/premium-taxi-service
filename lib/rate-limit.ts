@@ -1,7 +1,7 @@
 import { Ratelimit } from "@upstash/ratelimit";
-import { redis } from "./redis";
+import { hasPartialRedisConfiguration, redis } from "./redis";
 
-export const rateLimits = {
+export const rateLimits = redis ? {
   // Reviews: 10 requests per hour
   reviews: new Ratelimit({
     redis,
@@ -73,19 +73,20 @@ export const rateLimits = {
     analytics: true,
     prefix: "taxi-project:@upstash/ratelimit/auth",
   }),
-};
+} : null;
 
-export type RateLimitType = keyof typeof rateLimits;
+export type RateLimitType = keyof NonNullable<typeof rateLimits>;
 
 export async function checkRateLimit(
   identifier: string,
   type: RateLimitType
 ) {
-  // If Redis env vars are not set — skip rate limiting entirely
-  const redisUrl = process.env.UPSTASH_REDIS_REST_URL;
-  const redisToken = process.env.UPSTASH_REDIS_REST_TOKEN;
-  if (!redisUrl || !redisToken) {
-    console.warn(`⚠️ Rate limiting skipped for "${type}" — Redis env vars not configured`);
+  // Upstash is optional for a first deployment. Configure both values together.
+  if (!redis || !rateLimits) {
+    const reason = hasPartialRedisConfiguration
+      ? "only one of the two Upstash variables is configured"
+      : "Upstash variables are not configured";
+    console.warn(`Rate limiting skipped for "${type}" — ${reason}`);
     return { success: true, remaining: 999, limit: 999, reset: 0 };
   }
 

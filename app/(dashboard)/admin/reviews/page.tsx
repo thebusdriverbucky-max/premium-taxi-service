@@ -10,6 +10,7 @@ import { Textarea } from "@/components/ui/Textarea";
 import { Plus, MessageSquare, Upload, Image as ImageIcon, X } from "lucide-react";
 import ReviewsTable from "@/components/admin/ReviewsTable";
 import { CldUploadWidget } from "next-cloudinary";
+import { isCloudinaryWidgetConfigured } from "@/lib/cloudinary-widget";
 
 interface Review {
   id: string;
@@ -219,7 +220,7 @@ export default function AdminReviewsPage() {
                 value={formData.authorImage}
                 onChange={(e) => setFormData({ ...formData, authorImage: e.target.value })}
               />
-              <CldUploadWidget
+              {isCloudinaryWidgetConfigured ? <CldUploadWidget
                 uploadPreset={process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET}
                 onSuccess={(result: any) => {
                   if (result.info?.secure_url) {
@@ -258,7 +259,11 @@ export default function AdminReviewsPage() {
                     </Button>
                   </div>
                 )}
-              </CldUploadWidget>
+              </CldUploadWidget> : (
+                <p className="text-xs text-gray-500">
+                  Paste a hosted image URL above. The optional uploader appears after both Cloudinary widget values are configured.
+                </p>
+              )}
             </div>
           </div>
 
