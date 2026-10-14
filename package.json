@@ -13,6 +13,7 @@
     "start": "next start",
     "lint": "next lint",
     "test": "tsx --test lib/*.test.ts",
+    "email:preview": "tsx scripts/preview-emails.ts",
     "manifest:validate": "node scripts/validate-template-manifest.mjs",
     "test:pricing": "tsx --test lib/pricing.test.ts",
     "db:push": "prisma db push",

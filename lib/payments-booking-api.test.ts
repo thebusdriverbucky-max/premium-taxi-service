@@ -43,7 +43,7 @@ test('actual Stripe factory remains lazy and rejects incomplete deployment confi
 });
 
 function bookingApi(options: { configured?: boolean; card?: boolean; cash?: boolean; providerFails?: boolean } = {}) {
-  const calls = { routes: 0, stripe: 0, writes: [] as any[], sessions: [] as any[] };
+  const calls = { routes: 0, stripe: 0, writes: [] as any[], sessions: [] as any[], emails: [] as any[] };
   const tariff = { id: validBooking().tariffPlanId, name: 'Standard', currency: 'EUR', basePrice: '10', pricePerKm: '1', pricePerMin: '0', minPrice: '10', maxPassengers: 4, zones: [] };
   class RouteCalculationError extends Error {}
   const route = loadIsolated('app/api/trips/route.ts', {
@@ -73,7 +73,7 @@ function bookingApi(options: { configured?: boolean; card?: boolean; cash?: bool
     'next/server': { NextResponse: { json: (body: any, init?: any) => ({ body, status: init?.status || 200 }) } },
     '@/lib/validations': validation, '@/lib/validation-errors': errors,
     '@/lib/order-number': { generateOrderNumber: async () => 'TEST-1' }, zod,
-    '@/lib/email': { sendBookingEmails: async () => {} },
+    '@/lib/email': { sendBookingEmails: async (data: any, adminEmail: string, companyName: string) => { calls.emails.push({ data, adminEmail, companyName }); return true; } },
     '@/lib/google-routes': { RouteCalculationError, computeDrivingRoute: async (pickup: any, dropoff: any) => {
       calls.routes++;
       assert.equal(pickup.latitude, validBooking().pickup.latitude);
@@ -124,9 +124,28 @@ test('configured card creates real checkout request with deployment binding; pro
   assert.equal(api.calls.sessions[0].data.payment_intent_data.metadata.deploymentId, 'isolated-test-site');
   assert.equal(api.calls.sessions[0].opts.idempotencyKey, `booking/${validBooking().bookingRequestId}`);
   assert.equal(api.calls.writes[0].paymentStatus, 'UNPAID');
+  assert.equal(api.calls.emails.length, 0);
   const failing = bookingApi({ configured: true, providerFails: true });
   const failure = await failing.post({ ...validBooking(), paymentMethod: 'STRIPE' });
   assert.equal(failure.status, 500);
   assert.equal(failure.body.url, undefined);
   assert.equal(failing.calls.writes[0].paymentStatus, 'UNPAID');
+  assert.equal(failing.calls.emails.length, 0);
+});
+
+test('cash email payload contains the stored status, structured extras, notes and calculated route/price', async () => {
+  const api = bookingApi();
+  const extras = { luggage: { quantity: 2, size: 'Large' }, childSeats: { quantity: 1 } };
+  assert.equal((await api.post({ ...validBooking(), extras, notes: 'Meet at reception.' })).status, 200);
+  assert.equal(api.calls.emails.length, 1);
+  const { data, adminEmail } = api.calls.emails[0];
+  assert.equal(data.status, 'PENDING');
+  assert.equal(data.paymentStatus, 'PENDING');
+  assert.equal(data.paymentMethod, 'CASH');
+  assert.equal(JSON.stringify(data.extras), JSON.stringify(extras));
+  assert.equal(data.notes, 'Meet at reception.');
+  assert.equal(data.distance, '10.0 km');
+  assert.equal(data.duration, '10 min');
+  assert.equal(data.price, Number(api.calls.writes[0].total));
+  assert.equal(adminEmail, 'operator@example.com');
 });

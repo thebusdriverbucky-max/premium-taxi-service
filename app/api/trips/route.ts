@@ -239,13 +239,14 @@ export async function POST(request: NextRequest) {
     // Send emails only if payment is CASH. For CARD, emails are sent via Stripe webhook after successful payment
     if (paymentMethod === "CASH") {
       try {
-        const adminEmail = storeSettings?.storeEmail || process.env.ADMIN_EMAIL || "admin@example.com";
+        const adminEmail = storeSettings?.storeEmail?.trim() || process.env.ADMIN_EMAIL?.trim() || "";
         const companyName = storeSettings?.companyName || "Taxi Service";
 
         await sendBookingEmails({
           id: trip.id,
           tripNumber: trip.tripNumber || undefined,
-          customerName: trip.passengerName || "Клиент",
+          status: trip.status,
+          customerName: trip.passengerName || "Customer",
           customerEmail: trip.passengerEmail || "",
           customerPhone: trip.passengerPhone || "",
           pickupLocation: trip.pickupAddress,
@@ -253,13 +254,17 @@ export async function POST(request: NextRequest) {
           pickupDate: trip.pickupDateTime || new Date(),
           pickupTime: trip.pickupDateTime ? new Date(trip.pickupDateTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "",
           passengers: trip.passengerCount || 1,
-          tariffName: trip.tariffPlan?.name || "Стандарт",
+          tariffName: trip.tariffPlan?.name || "Standard",
           price: Number(trip.total),
           currency: trip.currency || undefined,
           paymentMethod: paymentMethod,
-          paymentStatus: trip.paymentStatus === "PAID" ? "PAID" : "PENDING",
+          paymentStatus: trip.paymentStatus,
           flightNumber: trip.flightNumber || undefined,
           notes: trip.notes || undefined,
+          extras: trip.extras,
+          discountAmount: Number(trip.discountAmount || 0),
+          distance: trip.distance != null ? `${trip.distance.toFixed(1)} km` : undefined,
+          duration: trip.duration != null ? `${trip.duration} min` : undefined,
         }, adminEmail, companyName);
         console.log("📧 Booking emails sent successfully");
       } catch (emailError) {

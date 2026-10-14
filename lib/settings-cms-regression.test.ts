@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import * as zod from 'zod';
+import * as emailTemplates from './email-templates';
 import * as jsx from 'react/jsx-runtime';
 import * as settingsValidation from './settings-validation';
 import * as cmsValidation from './cms-validation';
@@ -122,6 +123,7 @@ test('Contact recipient is settings first, private ADMIN_EMAIL fallback; missing
   const api = loadIsolated('app/api/contact/route.ts', {
     'next/server': { NextResponse: { json: (body: any, init?: any) => ({ body, status: init?.status || 200 }) } },
     '@/lib/email': { sendEmail: async ({ to }: any) => { recipients.push(to); return true; } },
+    '@/lib/email-templates': emailTemplates,
     zod,
     '@/lib/rate-limit': { checkRateLimit: async () => ({ success: true }) },
     '@/lib/db': { db: { storeSettings: { findFirst: async () => ({ storeEmail }) } } },

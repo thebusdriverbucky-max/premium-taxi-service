@@ -29,3 +29,6 @@ Thumbs.db
 
 # Prisma migration history, including migration_lock.toml, is versioned.
 .vercel
+
+# Fictional, generated offline email previews
+.email-preview/

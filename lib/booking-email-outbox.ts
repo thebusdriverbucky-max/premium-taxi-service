@@ -44,6 +44,7 @@ export async function deliverBookingEmail(
     const sent = await sendBookingEmails({
       id: trip.id,
       tripNumber: trip.tripNumber || undefined,
+      status: trip.status,
       customerName: trip.passengerName || "Customer",
       customerEmail: trip.passengerEmail || "",
       customerPhone: trip.passengerPhone || "",
@@ -60,11 +61,15 @@ export async function deliverBookingEmail(
       tariffName: trip.tariffPlan?.name || "Standard",
       price: Number(trip.total),
       currency: trip.currency,
-      paymentMethod: "STRIPE",
-      paymentStatus: "PAID",
+      paymentMethod: trip.paymentMethod || "STRIPE",
+      paymentStatus: trip.paymentStatus,
       flightNumber: trip.flightNumber || undefined,
       notes: trip.notes || undefined,
-    }, settings?.storeEmail || process.env.ADMIN_EMAIL || "admin@example.com",
+      extras: trip.extras,
+      discountAmount: Number(trip.discountAmount || 0),
+      distance: trip.distance != null ? `${trip.distance.toFixed(1)} km` : undefined,
+      duration: trip.duration != null ? `${trip.duration} min` : undefined,
+    }, settings?.storeEmail?.trim() || process.env.ADMIN_EMAIL?.trim() || "",
     settings?.companyName || "Taxi Service");
 
     if (!sent) {

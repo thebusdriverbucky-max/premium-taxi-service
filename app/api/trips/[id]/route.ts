@@ -1,7 +1,7 @@
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { NextRequest, NextResponse } from "next/server";
-import { getOrderStatusUpdateEmailHtml } from "@/lib/email-templates";
+import { getOrderStatusUpdateEmailHtml, getTripStatusLabel } from "@/lib/email-templates";
 import { sendEmail } from "@/lib/email";
 import { z } from "zod";
 
@@ -118,6 +118,7 @@ export async function PATCH(
       include: {
         user: true,
         tariffPlan: true,
+        driver: true,
       },
     });
 
@@ -139,13 +140,21 @@ export async function PATCH(
             updatedTrip.id,
             status,
             companyName,
-            updatedTrip.driverName || null
+            updatedTrip.driver?.name || updatedTrip.driverName || null,
+            {
+              tripNumber: updatedTrip.tripNumber,
+              driverPhone: updatedTrip.driver?.phone || updatedTrip.driverPhone,
+              supportEmail: storeSettings?.storeEmail || process.env.ADMIN_EMAIL,
+              paymentStatus: updatedTrip.paymentStatus,
+              paymentMethod: updatedTrip.paymentMethod,
+            },
           );
 
           await sendEmail({
             to: recipientEmail,
-            subject: `${getStatusEmoji(status)} Trip ${updatedTrip.tripNumber || updatedTrip.id} — ${status}`,
+            subject: `${getStatusEmoji(status)} Trip #${updatedTrip.tripNumber || updatedTrip.id.slice(-6).toUpperCase()} — ${getTripStatusLabel(status)}`,
             html,
+            replyTo: storeSettings?.storeEmail || process.env.ADMIN_EMAIL,
           });
         }
       } catch (emailError) {

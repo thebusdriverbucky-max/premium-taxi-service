@@ -44,7 +44,15 @@ export async function POST(req: Request) {
 
     const resetUrl = `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/reset-password?token=${resetToken}`;
 
-    await sendPasswordResetEmail(email, resetUrl);
+    const settings = await prisma.storeSettings.findFirst({
+      select: { companyName: true, storeEmail: true },
+    });
+    await sendPasswordResetEmail(
+      email,
+      resetUrl,
+      settings?.companyName || "Taxi Service",
+      settings?.storeEmail || process.env.ADMIN_EMAIL,
+    );
 
     return NextResponse.json({ message: "If an account exists with this email, you will receive a password reset link." });
   } catch (error) {
