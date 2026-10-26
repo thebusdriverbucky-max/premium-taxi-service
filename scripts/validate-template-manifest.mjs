@@ -98,7 +98,8 @@ function scanDirectory(directory) {
     )
       continue;
     const source = readFileSync(path, "utf8");
-    for (const match of source.matchAll(/process\.env\.([A-Z0-9_]+)/g)) {
+    // Reads only: a local script assigning process.env.X is not a deployment variable.
+    for (const match of source.matchAll(/process\.env\.([A-Z0-9_]+)\b(?!\s*=(?!=))/g)) {
       if (match[1] !== "NODE_ENV") directRuntimeNames.add(match[1]);
     }
   }
