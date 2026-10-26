@@ -2,10 +2,11 @@ import { NextResponse } from "next/server";
 import { db as prisma } from "@/lib/db";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
+import crypto from "crypto";
 
 const resetPasswordSchema = z.object({
   token: z.string(),
-  password: z.string().min(6),
+  password: z.string().min(8).max(100),
 });
 
 export async function POST(req: Request) {
@@ -13,9 +14,11 @@ export async function POST(req: Request) {
     const body = await req.json();
     const { token, password } = resetPasswordSchema.parse(body);
 
+    const hashedToken = crypto.createHash("sha256").update(token).digest("hex");
+
     const user = await prisma.user.findFirst({
       where: {
-        resetToken: token,
+        resetToken: hashedToken,
         resetTokenExpiry: {
           gt: new Date(),
         },

@@ -9,12 +9,12 @@ import {
   getTripStatusLabel,
   type TripEmailData,
 } from './email-templates';
+import { RESEND_TEST_SENDER, getEmailDeliveryStatus } from './email-config';
 
 // Preserve existing imports; rendering itself does not load the email provider.
 export { buildAdminEmailHtml, buildCustomerEmailHtml } from './email-templates';
 export type { TripEmailData } from './email-templates';
 
-const EMAIL_FROM = process.env.EMAIL_FROM || 'onboarding@resend.dev';
 let resendClient: Resend | null = null;
 let resendClientApiKey: string | null = null;
 
@@ -34,20 +34,28 @@ type EmailPayload = {
   idempotencyKey?: string;
 };
 
-export const sendEmail = async (data: EmailPayload) => {
-  const apiKey = process.env.RESEND_API_KEY;
-  if (!apiKey) {
-    console.log('⚠️ RESEND_API_KEY not set. Logging email to console.');
-    console.log('📧 [MOCK EMAIL] To:', data.to);
-    console.log('Subject:', data.subject);
-    console.log('HTML:', data.html);
-    return { id: 'mock-id' };
+export type SendEmailResult =
+  | { status: 'sent'; id: string }
+  | { status: 'not-configured' }
+  | { status: 'failed' };
+
+export const sendEmail = async (data: EmailPayload): Promise<SendEmailResult> => {
+  if (getEmailDeliveryStatus(process.env).state === 'not-configured') {
+    if (process.env.NODE_ENV === 'production') {
+      console.warn('Email delivery is not configured (RESEND_API_KEY is missing); email not sent.');
+    } else {
+      console.log('⚠️ RESEND_API_KEY not set. Logging email to console.');
+      console.log('📧 [MOCK EMAIL] To:', data.to);
+      console.log('Subject:', data.subject);
+      console.log('HTML:', data.html);
+    }
+    return { status: 'not-configured' };
   }
   try {
-    const resend = getResendClient(apiKey);
+    const resend = getResendClient(process.env.RESEND_API_KEY!.trim());
     const { data: emailData, error } = await resend.emails.send(
       {
-        from: EMAIL_FROM,
+        from: process.env.EMAIL_FROM?.trim() || RESEND_TEST_SENDER,
         to: data.to,
         subject: data.subject,
         html: data.html,
@@ -57,13 +65,13 @@ export const sendEmail = async (data: EmailPayload) => {
     );
     if (error) {
       console.error('❌ Error sending email:', error);
-      return null;
+      return { status: 'failed' };
     }
     console.log(`📧 Email sent: ${emailData?.id}`);
-    return emailData;
+    return { status: 'sent', id: emailData?.id ?? '' };
   } catch (error) {
     console.error('❌ Error sending email:', error);
-    return null;
+    return { status: 'failed' };
   }
 };
 
@@ -123,7 +131,7 @@ export const sendBookingEmails = async (
   adminEmail: string,
   companyName: string,
 ): Promise<boolean> => {
-  const promises: Promise<unknown | null>[] = [];
+  const promises: Promise<SendEmailResult>[] = [];
   const templateData = { ...data, supportEmail: data.supportEmail || adminEmail };
   // Skip only known placeholders, not real addresses containing "guest".
   const hasCustomerEmail = data.customerEmail && data.customerEmail !== 'guest@example.com' && !data.customerEmail.endsWith('@placeholder.com');
@@ -146,5 +154,5 @@ export const sendBookingEmails = async (
     }));
   }
   const results = await Promise.allSettled(promises);
-  return results.every(result => result.status === 'fulfilled' && result.value !== null);
+  return results.every(result => result.status === 'fulfilled' && result.value.status === 'sent');
 };

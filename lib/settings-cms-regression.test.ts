@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import * as zod from 'zod';
 import * as emailTemplates from './email-templates';
+import * as emailConfig from './email-config';
 import * as jsx from 'react/jsx-runtime';
 import * as settingsValidation from './settings-validation';
 import * as cmsValidation from './cms-validation';
@@ -38,6 +39,7 @@ test('actual settings action saves normalized cash-only data, does not write inv
     'next/cache': { revalidatePath() {} }, zod,
     '@/lib/settings-validation': settingsValidation, '@/lib/validation-errors': errors,
     '@/lib/stripe': { getStripeConfiguration: () => ({ configured: false, present: {} }) },
+    '@/lib/email-config': emailConfig,
   });
   assert.equal((await action.updateSettings({ ...settings, storeEmail: '  ' })).success, true);
   assert.equal(saved.storeEmail, null);
@@ -53,6 +55,23 @@ test('actual settings action saves normalized cash-only data, does not write inv
   admin = false;
   assert.equal((await action.updateSettings(settings)).success, false);
   assert.equal(writes, 2);
+});
+
+test('admin settings expose email delivery presence booleans only, and only to admins', async () => {
+  let admin = true;
+  const action = loadIsolated('app/actions/settings.ts', {
+    '@/lib/db': { db: { storeSettings: { findFirst: async () => ({ id: 'settings', currency: 'EUR' }) } } },
+    '@/lib/require-admin': { requireAdmin: async () => { if (!admin) throw new Error('Denied'); } },
+    'next/cache': { revalidatePath() {} }, zod,
+    '@/lib/settings-validation': settingsValidation, '@/lib/validation-errors': errors,
+    '@/lib/stripe': { getStripeConfiguration: () => ({ configured: false, present: {} }) },
+    '@/lib/email-config': emailConfig,
+  }, { process: { env: { RESEND_API_KEY: 're_secret_value' } } });
+  const result = await action.getSettings();
+  assert.deepEqual(JSON.parse(JSON.stringify(result.emailDelivery)), { apiKeyConfigured: true, senderConfigured: false, state: 'test-sender' });
+  assert.doesNotMatch(JSON.stringify(result), /re_secret_value/);
+  admin = false;
+  assert.equal((await action.getSettings()).success, false);
 });
 
 test('CMS actions persist every supported page and reject unknown fields/slugs and URL renames', async () => {
@@ -118,11 +137,12 @@ test('public CMS routes use the matching slug, Contact and FAQ expose saved titl
 
 test('Contact recipient is settings first, private ADMIN_EMAIL fallback; missing/invalid recipient never pretends delivery', async () => {
   let storeEmail: string | null = 'public@example.com';
-  const env: Record<string, string> = { ADMIN_EMAIL: 'private@example.com' };
+  const env: Record<string, string> = { ADMIN_EMAIL: 'private@example.com', RESEND_API_KEY: 're_mock_only', EMAIL_FROM: 'sender@example.com' };
   const recipients: string[] = [];
   const api = loadIsolated('app/api/contact/route.ts', {
     'next/server': { NextResponse: { json: (body: any, init?: any) => ({ body, status: init?.status || 200 }) } },
-    '@/lib/email': { sendEmail: async ({ to }: any) => { recipients.push(to); return true; } },
+    '@/lib/email': { sendEmail: async ({ to }: any) => { recipients.push(to); return { status: 'sent', id: 'test' }; } },
+    '@/lib/email-config': emailConfig,
     '@/lib/email-templates': emailTemplates,
     zod,
     '@/lib/rate-limit': { checkRateLimit: async () => ({ success: true }) },

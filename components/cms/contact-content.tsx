@@ -18,6 +18,7 @@ export default function ContactContent({ title, content }: { title: string; cont
   });
   const [submitted, setSubmitted] = useState(false);
   const [deliveryError, setDeliveryError] = useState<string>();
+  const [unavailable, setUnavailable] = useState<{ message: string; phone: string | null; email: string | null }>();
 
   const handleChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
@@ -29,6 +30,7 @@ export default function ContactContent({ title, content }: { title: string; cont
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setDeliveryError(undefined);
+    setUnavailable(undefined);
 
     if (formData.subject.length < 5) {
       toast.error("Subject must be at least 5 characters long");
@@ -53,6 +55,14 @@ export default function ContactContent({ title, content }: { title: string; cont
         setTimeout(() => setSubmitted(false), 5000);
       } else {
         const result = await response.json().catch(() => ({}));
+        if (result.code === 'EMAIL_NOT_CONFIGURED') {
+          setUnavailable({
+            message: result.error,
+            phone: result.contact?.phone ?? null,
+            email: result.contact?.email ?? null,
+          });
+          return;
+        }
         const message = result.error || 'Failed to send message. Please try again.';
         setDeliveryError(message);
         toast.error(message);
@@ -85,6 +95,27 @@ export default function ContactContent({ title, content }: { title: string; cont
           )}
 
           {deliveryError && <p role="alert" className="mb-4 text-red-300">{deliveryError}</p>}
+          {unavailable && (
+            <div role="alert" className="mb-6 p-4 rounded-2xl border border-taxi-gold/30 bg-taxi-gold/10">
+              <p className="text-white">{unavailable.message}</p>
+              {(unavailable.phone || unavailable.email) && (
+                <p className="mt-2 flex flex-wrap gap-x-6 gap-y-1 text-sm">
+                  {unavailable.phone && (
+                    <a href={`tel:${unavailable.phone}`} className="inline-flex items-center gap-2 text-taxi-gold hover:underline">
+                      <Phone className="w-4 h-4" />
+                      {unavailable.phone}
+                    </a>
+                  )}
+                  {unavailable.email && (
+                    <a href={`mailto:${unavailable.email}`} className="inline-flex items-center gap-2 text-taxi-gold hover:underline">
+                      <Mail className="w-4 h-4" />
+                      {unavailable.email}
+                    </a>
+                  )}
+                </p>
+              )}
+            </div>
+          )}
           <form onSubmit={handleSubmit} className="space-y-6 bg-white/5 p-8 rounded-3xl shadow-2xl border border-white/10 backdrop-blur-md">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <Input

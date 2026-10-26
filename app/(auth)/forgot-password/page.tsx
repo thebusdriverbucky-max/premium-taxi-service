@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/Input";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
+import { useSettings } from "@/components/providers/settings-provider";
 
 const forgotPasswordSchema = z.object({
   email: z.string().email("Invalid email address"),
@@ -18,6 +19,10 @@ export default function ForgotPasswordPage() {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [unavailable, setUnavailable] = useState<string | null>(null);
+  const { settings } = useSettings();
+  const contactPhone = settings?.phoneNumber?.trim();
+  const contactEmail = settings?.storeEmail?.trim();
 
   const {
     register,
@@ -31,6 +36,7 @@ export default function ForgotPasswordPage() {
     setLoading(true);
     setError(null);
     setMessage(null);
+    setUnavailable(null);
 
     try {
       const response = await fetch("/api/auth/forgot-password", {
@@ -42,7 +48,11 @@ export default function ForgotPasswordPage() {
       });
 
       if (!response.ok) {
-        const errorData = await response.json();
+        const errorData = await response.json().catch(() => ({}));
+        if (errorData.code === "EMAIL_NOT_CONFIGURED") {
+          setUnavailable(errorData.message);
+          return;
+        }
         throw new Error(errorData.message || "Something went wrong");
       }
 
@@ -71,6 +81,18 @@ export default function ForgotPasswordPage() {
         {error && (
           <div className="mb-4 p-3 bg-red-50 text-red-700 rounded-lg text-sm">
             {error}
+          </div>
+        )}
+
+        {unavailable && (
+          <div role="alert" className="mb-4 p-3 bg-amber-50 text-amber-800 rounded-lg text-sm">
+            <p>{unavailable}</p>
+            {(contactPhone || contactEmail) && (
+              <p className="mt-2 flex flex-wrap gap-x-4 gap-y-1 font-medium">
+                {contactPhone && <a href={`tel:${contactPhone}`} className="hover:underline">{contactPhone}</a>}
+                {contactEmail && <a href={`mailto:${contactEmail}`} className="hover:underline">{contactEmail}</a>}
+              </p>
+            )}
           </div>
         )}
 

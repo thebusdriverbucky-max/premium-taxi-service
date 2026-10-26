@@ -9,6 +9,7 @@ export type { StoreSettingsData } from '@/lib/settings-validation';
 import { storeSettingsSchema, type StoreSettingsData } from '@/lib/settings-validation';
 import { validationFieldErrors } from '@/lib/validation-errors';
 import { getStripeConfiguration } from '@/lib/stripe';
+import { getEmailDeliveryStatus } from '@/lib/email-config';
 
 export async function getSettings() {
   try {
@@ -23,7 +24,7 @@ export async function getSettings() {
         },
       });
     }
-    return { success: true, data: settings, stripeConfiguration: getStripeConfiguration() };
+    return { success: true, data: settings, stripeConfiguration: getStripeConfiguration(), emailDelivery: getEmailDeliveryStatus(process.env) };
   } catch (error) {
     console.error('Error fetching settings:', error);
     return { success: false, error: 'Failed to fetch settings' };

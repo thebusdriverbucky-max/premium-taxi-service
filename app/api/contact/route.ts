@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { sendEmail } from "@/lib/email";
+import { getEmailDeliveryStatus } from "@/lib/email-config";
 import { getAdminContactEmailHtml, getCustomerContactEmailHtml } from "@/lib/email-templates";
 import { z } from "zod";
 import { checkRateLimit } from "@/lib/rate-limit";
@@ -28,6 +29,19 @@ export async function POST(request: NextRequest) {
     const { name, email, subject, message } = contactSchema.parse(body);
 
     const storeSettings = await db.storeSettings.findFirst();
+    if (getEmailDeliveryStatus(process.env).state === "not-configured") {
+      return NextResponse.json(
+        {
+          error: "Our contact form is temporarily unavailable. Please reach us by phone or email.",
+          code: "EMAIL_NOT_CONFIGURED",
+          contact: {
+            phone: storeSettings?.phoneNumber?.trim() || null,
+            email: storeSettings?.storeEmail?.trim() || null,
+          },
+        },
+        { status: 503 },
+      );
+    }
     const adminEmail = storeSettings?.storeEmail?.trim() || process.env.ADMIN_EMAIL?.trim();
     if (!adminEmail || !z.string().email().safeParse(adminEmail).success) {
       return NextResponse.json({ error: "Contact message delivery is not configured. Please use another contact method." }, { status: 503 });
@@ -41,7 +55,7 @@ export async function POST(request: NextRequest) {
       replyTo: email,
     });
 
-    if (!adminDelivery) {
+    if (adminDelivery.status !== "sent") {
       return NextResponse.json(
         { error: "Message delivery is temporarily unavailable" },
         { status: 502 },
@@ -55,7 +69,7 @@ export async function POST(request: NextRequest) {
       replyTo: adminEmail,
     });
 
-    if (!confirmationDelivery) {
+    if (confirmationDelivery.status !== "sent") {
       console.error("Contact confirmation email was not delivered", { email });
     }
 

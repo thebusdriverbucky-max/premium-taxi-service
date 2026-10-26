@@ -38,6 +38,12 @@ export function ProfileForm({ user }: ProfileFormProps) {
       return;
     }
 
+    if (formData.newPassword && formData.newPassword.length < 8) {
+      setMessage({ type: "error", text: "New password must be at least 8 characters" });
+      setIsLoading(false);
+      return;
+    }
+
     try {
       await updateProfile({
         name: formData.name,
@@ -126,6 +132,7 @@ export function ProfileForm({ user }: ProfileFormProps) {
               type="password"
               value={formData.newPassword}
               onChange={(e) => setFormData({ ...formData, newPassword: e.target.value })}
+              helperText="At least 8 characters"
               placeholder="••••••••"
             />
             <Input

@@ -3,6 +3,7 @@ import { db as prisma } from "@/lib/db";
 import { z } from "zod";
 import crypto from "crypto";
 import { sendPasswordResetEmail } from "@/lib/email";
+import { getEmailDeliveryStatus } from "@/lib/email-config";
 import { checkRateLimit } from "@/lib/rate-limit";
 
 const forgotPasswordSchema = z.object({
@@ -18,6 +19,17 @@ export async function POST(req: Request) {
       return new NextResponse("Too Many Requests", { status: 429 });
     }
 
+    // Checked before the user lookup so the response never depends on whether an account exists.
+    if (getEmailDeliveryStatus(process.env).state === "not-configured") {
+      return NextResponse.json(
+        {
+          code: "EMAIL_NOT_CONFIGURED",
+          message: "Password reset by email is not available right now. Please contact us for help.",
+        },
+        { status: 503 },
+      );
+    }
+
     const body = await req.json();
     const { email } = forgotPasswordSchema.parse(body);
 
@@ -26,18 +38,19 @@ export async function POST(req: Request) {
     });
 
     if (!user) {
-      // Возвращаем 200 OK даже если пользователя нет, чтобы не раскрывать наличие email
+      // Return 200 even when the user does not exist so registered emails are not revealed
       return NextResponse.json({ message: "If an account exists with this email, you will receive a password reset link." });
     }
 
-    // Генерация токена
+    // The raw token only goes into the email link; the database stores its SHA-256 hash.
     const resetToken = crypto.randomBytes(32).toString("hex");
-    const resetTokenExpiry = new Date(Date.now() + 3600000); // 1 час
+    const hashedResetToken = crypto.createHash("sha256").update(resetToken).digest("hex");
+    const resetTokenExpiry = new Date(Date.now() + 3600000); // 1 hour
 
     await prisma.user.update({
       where: { email },
       data: {
-        resetToken,
+        resetToken: hashedResetToken,
         resetTokenExpiry,
       },
     });

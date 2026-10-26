@@ -16,6 +16,7 @@ import FaqTable from '@/components/admin/FaqTable';
 import { cmsSlugs } from '@/lib/cms-validation';
 import { isCloudinaryWidgetConfigured } from '@/lib/cloudinary-widget';
 import type { stripeConfiguration } from '@/lib/payment-availability';
+import type { EmailDeliveryStatus } from '@/lib/email-config';
 import { Dialog } from '@/components/ui/Dialog';
 
 const CURRENCIES = ['USD', 'EUR', 'GBP', 'CAD', 'AUD'];
@@ -288,6 +289,7 @@ export default function SettingsPage() {
   const { register, handleSubmit, setValue, watch, reset } = useForm<StoreSettingsData>();
   const [settingsErrors, setSettingsErrors] = useState<Record<string, string>>({});
   const [stripeStatus, setStripeStatus] = useState<ReturnType<typeof stripeConfiguration> | null>(null);
+  const [emailStatus, setEmailStatus] = useState<EmailDeliveryStatus | null>(null);
   const cmsForm = useForm<ContentPageData>();
 
   const loadSettings = async () => {
@@ -296,6 +298,7 @@ export default function SettingsPage() {
       const data = res.data as unknown as StoreSettingsData;
       setSettings(data);
       setStripeStatus(res.stripeConfiguration ?? null);
+      setEmailStatus(res.emailDelivery ?? null);
       setValue('companyName', data.companyName || '');
       setValue('storeEmail', data.storeEmail || '');
       setValue('currency', data.currency);
@@ -1170,6 +1173,27 @@ export default function SettingsPage() {
                   </span>
                 </label>
               </div>
+            </div>
+
+            {/* Email Delivery */}
+            <div className="mt-8 pt-8 border-t border-white/5">
+              <h4 className="text-md font-semibold text-white/80 mb-4 flex items-center gap-2">
+                📧 Email Delivery
+              </h4>
+              <p className="text-sm text-gray-300" role="status">
+                {emailStatus?.state === 'ready'
+                  ? 'Email server variables are present. Credentials and the sender domain still require a test booking.'
+                  : emailStatus?.state === 'test-sender'
+                    ? 'EMAIL_FROM is not set: emails are sent from the Resend test address and only reach your own Resend account email.'
+                    : 'Email delivery is not configured: nothing is being sent.'}
+                {emailStatus && (
+                  <>
+                    <span className="block">RESEND_API_KEY: {String(emailStatus.apiKeyConfigured)}</span>
+                    <span className="block">EMAIL_FROM: {String(emailStatus.senderConfigured)}</span>
+                  </>
+                )}
+                Booking confirmations, password reset emails, contact form messages and trip status emails depend on these variables.
+              </p>
             </div>
           </div>
 

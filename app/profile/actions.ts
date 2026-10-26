@@ -32,6 +32,10 @@ export async function updateProfile(data: {
   }
 
   if (data.newPassword) {
+    if (data.newPassword.length < 8) {
+      throw new Error("New password must be at least 8 characters");
+    }
+
     if (!data.currentPassword) {
       throw new Error("Current password is required to set a new password");
     }

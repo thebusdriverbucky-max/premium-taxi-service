@@ -18,3 +18,25 @@ test("email module can be imported without optional Resend credentials", async (
     }
   }
 });
+
+test("sendEmail without Resend credentials reports not-configured instead of a fake delivery", async () => {
+  const originalApiKey = process.env.RESEND_API_KEY;
+  const originalLog = console.log;
+
+  try {
+    delete process.env.RESEND_API_KEY;
+    console.log = () => {};
+
+    const { sendEmail } = await import("./email");
+    const result = await sendEmail({ to: "alex@example.test", subject: "Hello", html: "<p>Hello</p>" });
+
+    assert.deepEqual(result, { status: "not-configured" });
+  } finally {
+    console.log = originalLog;
+    if (originalApiKey === undefined) {
+      delete process.env.RESEND_API_KEY;
+    } else {
+      process.env.RESEND_API_KEY = originalApiKey;
+    }
+  }
+});
