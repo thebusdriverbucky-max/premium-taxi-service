@@ -12,7 +12,11 @@ import { validationFieldErrors } from "@/lib/validation-errors";
 import { generateOrderNumber } from "@/lib/order-number";
 import { z } from "zod";
 import { sendBookingEmails } from "@/lib/email";
-import type { Prisma } from "@prisma/client";
+import { Prisma, TripStatus } from "@prisma/client";
+import {
+  releaseAbandonedCheckoutTrip,
+  STALE_CHECKOUT_START_MS,
+} from "@/lib/trip-settlement";
 import { computeDrivingRoute, RouteCalculationError } from "@/lib/google-routes";
 import {
   calculatePrice,
@@ -22,6 +26,23 @@ import {
   type PricingDiscount,
   type PricingZone,
 } from "@/lib/pricing";
+
+const tripListQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).max(1_000_000).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(50),
+  status: z.enum(["ALL", ...Object.values(TripStatus)]).default("ALL"),
+});
+
+const BOOKING_IN_PROGRESS_MESSAGE =
+  "Your previous booking attempt is still being processed. Please wait a moment and try again.";
+
+function isBookingRequestConflict(error: unknown) {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== "P2002") {
+    return false;
+  }
+  const target = error.meta?.target;
+  return (Array.isArray(target) ? target.join(",") : String(target ?? "")).includes("bookingRequestId");
+}
 
 function parseZones(value: unknown): PricingZone[] {
   if (!Array.isArray(value)) return [];
@@ -103,7 +124,14 @@ export async function POST(request: NextRequest) {
         const existingSession = await getStripe().checkout.sessions.retrieve(existingTrip.stripeCheckoutSessionId);
         return NextResponse.json({ tripId: existingTrip.id, url: existingSession.url });
       }
-      return NextResponse.json({ error: "Booking is already being processed" }, { status: 409 });
+      // No Checkout Session means the earlier request died before Stripe answered.
+      // Once it cannot still be in flight, start over with a fresh trip.
+      const released = await releaseAbandonedCheckoutTrip(db, existingTrip.id, {
+        createdBefore: new Date(Date.now() - STALE_CHECKOUT_START_MS),
+      });
+      if (!released) {
+        return NextResponse.json({ error: BOOKING_IN_PROGRESS_MESSAGE }, { status: 409 });
+      }
     }
     const tariffPlan = await db.tariffPlan.findUnique({
       where: { id: tariffPlanId, isActive: true },
@@ -242,7 +270,7 @@ export async function POST(request: NextRequest) {
         const adminEmail = storeSettings?.storeEmail?.trim() || process.env.ADMIN_EMAIL?.trim() || "";
         const companyName = storeSettings?.companyName || "Taxi Service";
 
-        await sendBookingEmails({
+        const delivered = await sendBookingEmails({
           id: trip.id,
           tripNumber: trip.tripNumber || undefined,
           status: trip.status,
@@ -266,7 +294,8 @@ export async function POST(request: NextRequest) {
           distance: trip.distance != null ? `${trip.distance.toFixed(1)} km` : undefined,
           duration: trip.duration != null ? `${trip.duration} min` : undefined,
         }, adminEmail, companyName);
-        console.log("📧 Booking emails sent successfully");
+        if (delivered) console.log("📧 Booking emails sent successfully");
+        else console.warn("⚠️ Booking emails were not delivered", { tripId: trip.id });
       } catch (emailError) {
         console.error("❌ Failed to send booking emails:", emailError);
       }
@@ -315,7 +344,7 @@ export async function POST(request: NextRequest) {
             deploymentId: getStripeDeploymentId(),
           },
         },
-      }, { idempotencyKey: `booking/${validatedData.bookingRequestId}` });
+      }, { idempotencyKey: `checkout/${trip.id}` });
       console.log("✅ Stripe session created:", stripeSession.id);
 
       await db.trip.update({
@@ -325,13 +354,30 @@ export async function POST(request: NextRequest) {
       console.log("✅ Trip updated with Stripe session ID");
 
       return NextResponse.json({ url: stripeSession.url });
-    } catch (stripeError: any) {
-      console.error("Stripe checkout creation failed");
-      throw stripeError;
+    } catch (stripeError: unknown) {
+      console.error("Stripe checkout creation failed", {
+        tripId: trip.id,
+        error: stripeError instanceof Error ? stripeError.message : "Unknown error",
+      });
+      try {
+        await releaseAbandonedCheckoutTrip(db, trip.id);
+      } catch (releaseError) {
+        console.error("Failed to release trip after Stripe failure", {
+          tripId: trip.id,
+          error: releaseError instanceof Error ? releaseError.message : "Unknown error",
+        });
+      }
+      return NextResponse.json(
+        { error: "Card payment could not be started. Please try again or choose another payment method." },
+        { status: 502 },
+      );
     }
   } catch (error: any) {
     if (error instanceof RouteCalculationError) {
       return NextResponse.json({ error: 'Unable to calculate a driving route. Please select the locations again or try later.', fieldErrors: { route: 'Driving route is unavailable' } }, { status: 503 });
+    }
+    if (isBookingRequestConflict(error)) {
+      return NextResponse.json({ error: BOOKING_IN_PROGRESS_MESSAGE }, { status: 409 });
     }
     console.error("Trip creation failed");
     return NextResponse.json(
@@ -349,28 +395,48 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const trips = await db.trip.findMany({
-      include: {
-        user: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-          },
-        },
-        tariffPlan: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
-      },
-      orderBy: {
-        createdAt: "desc",
-      },
-    });
+    const query = tripListQuerySchema.safeParse(
+      Object.fromEntries(request.nextUrl.searchParams),
+    );
+    if (!query.success) {
+      return NextResponse.json({ error: "Invalid pagination or status filter" }, { status: 400 });
+    }
 
-    return NextResponse.json(trips);
+    const { page, pageSize, status } = query.data;
+    const where: Prisma.TripWhereInput = status === "ALL" ? {} : { status };
+
+    const [trips, total] = await db.$transaction([
+      db.trip.findMany({
+        where,
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+            },
+          },
+          tariffPlan: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+        },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+      db.trip.count({ where }),
+    ]);
+
+    return NextResponse.json({
+      trips,
+      total,
+      page,
+      pageSize,
+      totalPages: Math.ceil(total / pageSize),
+    });
   } catch (error) {
     console.error("❌ Error fetching trips:", error);
     return NextResponse.json(

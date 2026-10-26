@@ -13,6 +13,8 @@ import {
   applyTripRefund,
   expireTripPayment,
   markTripPaymentAttemptFailed,
+  releaseAbandonedCheckoutTrip,
+  releaseAbandonedCheckoutTrips,
   settleTripPaid,
 } from "./trip-settlement";
 
@@ -79,11 +81,20 @@ function matchesScalar<T>(value: T, filter: unknown): boolean {
     return value === filter;
   }
 
-  const condition = filter as { in?: T[]; notIn?: T[]; not?: T; lte?: Prisma.Decimal };
+  const condition = filter as {
+    in?: T[];
+    notIn?: T[];
+    not?: T;
+    lte?: Prisma.Decimal;
+    lt?: Date;
+  };
   if (condition.in && !condition.in.includes(value)) return false;
   if (condition.notIn && condition.notIn.includes(value)) return false;
   if (condition.not !== undefined && value === condition.not) return false;
   if (condition.lte && !(value instanceof Prisma.Decimal && value.lte(condition.lte))) {
+    return false;
+  }
+  if (condition.lt && !(value instanceof Date && value < condition.lt)) {
     return false;
   }
   return true;
@@ -94,15 +105,19 @@ function createSettlementClient(initialTrip: Trip) {
   let successfulUpdates = 0;
   const emailDeliveryTripIds = new Set<string>();
 
+  const matchesWhere = (where: Record<string, unknown>) =>
+    Object.entries(where).every(([key, filter]) =>
+      matchesScalar(trip[key as keyof Trip], filter));
+
   const delegate = {
+    async findMany(args: { where: Record<string, unknown>; take?: number }) {
+      return matchesWhere(args.where) && args.take !== 0 ? [{ id: trip.id }] : [];
+    },
     async updateMany(args: {
       where: Record<string, unknown>;
       data: Record<string, unknown>;
     }) {
-      const matches = Object.entries(args.where).every(([key, filter]) =>
-        matchesScalar(trip[key as keyof Trip], filter));
-
-      if (!matches) return { count: 0 };
+      if (!matchesWhere(args.where)) return { count: 0 };
 
       trip = { ...trip, ...args.data, updatedAt: new Date() } as Trip;
       successfulUpdates += 1;
@@ -294,4 +309,85 @@ test("rejects Stripe identifiers owned by another trip settlement", async () => 
     store.getTrip(),
     "pi_other",
   ), /PaymentIntent does not belong/);
+});
+
+function createAbandonedTrip(overrides: Partial<Trip> = {}) {
+  return createTrip({
+    paymentMethod: PaymentMethod.STRIPE,
+    paymentStatus: PaymentStatus.UNPAID,
+    stripeCheckoutSessionId: null,
+    stripePaymentIntentId: null,
+    bookingRequestId: "request-1",
+    discountCodeId: "discount-1",
+    ...overrides,
+  });
+}
+
+test("releasing an abandoned checkout cancels the trip and frees its booking request and coupon", async () => {
+  const store = createSettlementClient(createAbandonedTrip());
+
+  assert.equal(await releaseAbandonedCheckoutTrip(store.client, "trip-1"), true);
+
+  assert.equal(store.getTrip().status, TripStatus.CANCELLED);
+  assert.equal(store.getTrip().paymentStatus, PaymentStatus.FAILED);
+  assert.equal(store.getTrip().bookingRequestId, null);
+  assert.equal(store.getTrip().discountCodeId, null);
+  assert.equal(await releaseAbandonedCheckoutTrip(store.client, "trip-1"), false);
+});
+
+for (const [name, overrides] of [
+  ["has a Checkout Session", { stripeCheckoutSessionId: "cs_1" }],
+  ["is already paid", { paymentStatus: PaymentStatus.PAID, status: TripStatus.CONFIRMED }],
+  ["is a cash booking", { paymentMethod: PaymentMethod.CASH, paymentStatus: PaymentStatus.PENDING }],
+] as const) {
+  test(`releasing an abandoned checkout leaves a trip that ${name} untouched`, async () => {
+    const store = createSettlementClient(createAbandonedTrip(overrides));
+    const before = store.getTrip();
+
+    assert.equal(await releaseAbandonedCheckoutTrip(store.client, "trip-1"), false);
+    assert.equal(await releaseAbandonedCheckoutTrips(store.client, {
+      createdBefore: new Date("2027-01-01T00:00:00.000Z"),
+      limit: 10,
+    }), 0);
+
+    assert.deepEqual(store.getTrip(), before);
+    assert.equal(store.getSuccessfulUpdates(), 0);
+  });
+}
+
+test("releasing an abandoned checkout respects the age cutoff", async () => {
+  const store = createSettlementClient(createAbandonedTrip());
+  const createdAt = store.getTrip().createdAt;
+
+  assert.equal(await releaseAbandonedCheckoutTrip(store.client, "trip-1", {
+    createdBefore: new Date(createdAt.getTime() - 1),
+  }), false);
+  assert.equal(store.getTrip().status, TripStatus.PENDING);
+
+  assert.equal(await releaseAbandonedCheckoutTrip(store.client, "trip-1", {
+    createdBefore: new Date(createdAt.getTime() + 1),
+  }), true);
+  assert.equal(store.getTrip().status, TripStatus.CANCELLED);
+});
+
+test("a Checkout Session attached before release wins the race", async () => {
+  const store = createSettlementClient(createAbandonedTrip());
+  await store.client.trip.updateMany({
+    where: { id: "trip-1" },
+    data: { stripeCheckoutSessionId: "cs_1" },
+  });
+
+  assert.equal(await releaseAbandonedCheckoutTrip(store.client, "trip-1"), false);
+  assert.equal(store.getTrip().status, TripStatus.PENDING);
+  assert.equal(store.getTrip().bookingRequestId, "request-1");
+});
+
+test("batch release reports how many abandoned checkouts it released", async () => {
+  const store = createSettlementClient(createAbandonedTrip());
+  const options = { createdBefore: new Date("2027-01-01T00:00:00.000Z"), limit: 50 };
+
+  assert.equal(await releaseAbandonedCheckoutTrips(store.client, options), 1);
+  assert.equal(store.getTrip().status, TripStatus.CANCELLED);
+  assert.equal(store.getTrip().bookingRequestId, null);
+  assert.equal(await releaseAbandonedCheckoutTrips(store.client, options), 0);
 });

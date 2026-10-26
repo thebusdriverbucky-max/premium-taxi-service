@@ -7,6 +7,10 @@ import {
   reconcileCheckoutSession,
   RECONCILABLE_PAYMENT_STATUSES,
 } from "@/lib/stripe-trip-reconciliation";
+import {
+  ABANDONED_CHECKOUT_TRIP_MS,
+  releaseAbandonedCheckoutTrips,
+} from "@/lib/trip-settlement";
 
 export const dynamic = "force-dynamic";
 
@@ -64,10 +68,23 @@ export async function GET(request: NextRequest) {
     }
   }
 
+  let releasedAbandoned = 0;
+  try {
+    releasedAbandoned = await releaseAbandonedCheckoutTrips(db, {
+      createdBefore: new Date(Date.now() - ABANDONED_CHECKOUT_TRIP_MS),
+      limit: BATCH_SIZE,
+    });
+  } catch (error) {
+    summary.failed += 1;
+    console.error("Releasing abandoned checkout trips failed", {
+      error: error instanceof Error ? error.message : "Unknown error",
+    });
+  }
+
   const emails = await deliverPendingBookingEmails(BATCH_SIZE);
 
   return NextResponse.json(
-    { payments: summary, emails },
+    { payments: { ...summary, releasedAbandoned }, emails },
     { status: summary.failed > 0 || emails.failed > 0 ? 207 : 200 },
   );
 }

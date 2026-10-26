@@ -2,7 +2,7 @@
 
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useSession } from "next-auth/react";
 import { Dialog } from "@/components/ui/Dialog";
 import { Select } from "@/components/ui/Select";
@@ -24,6 +24,7 @@ const tripStatuses = [
 export default function AdminTripsPage() {
   const { data: session } = useSession();
   const [trips, setTrips] = useState<Trip[]>([]);
+  const [totalPages, setTotalPages] = useState(0);
   const [loading, setLoading] = useState(true);
   const [selectedTrip, setSelectedTrip] = useState<Trip | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -36,24 +37,42 @@ export default function AdminTripsPage() {
   const [currentPage, setCurrentPage] = useState(1);
   const TRIPS_PER_PAGE = 50;
 
-  useEffect(() => {
-    fetchTrips();
-    fetchVehicles();
-    fetchDrivers();
-  }, []);
+  const latestRequest = useRef(0);
 
-  const fetchTrips = async () => {
+  const fetchTrips = useCallback(async () => {
+    const request = ++latestRequest.current;
     try {
-      const response = await fetch("/api/trips");
+      const params = new URLSearchParams({
+        page: String(currentPage),
+        pageSize: String(TRIPS_PER_PAGE),
+        status: statusFilter,
+      });
+      const response = await fetch(`/api/trips?${params}`);
       const data = await response.json();
-      setTrips(data);
-      setCurrentPage(1);
+      if (request !== latestRequest.current) return;
+      if (!response.ok) throw new Error(data.error || "Failed to fetch trips");
+
+      if (data.totalPages > 0 && currentPage > data.totalPages) {
+        setCurrentPage(data.totalPages);
+        return;
+      }
+      setTrips(data.trips);
+      setTotalPages(data.totalPages);
     } catch (error) {
       console.error("Failed to fetch trips:", error);
     } finally {
-      setLoading(false);
+      if (request === latestRequest.current) setLoading(false);
     }
-  };
+  }, [currentPage, statusFilter]);
+
+  useEffect(() => {
+    fetchTrips();
+  }, [fetchTrips]);
+
+  useEffect(() => {
+    fetchVehicles();
+    fetchDrivers();
+  }, []);
 
   const fetchVehicles = async () => {
     try {
@@ -144,16 +163,6 @@ export default function AdminTripsPage() {
     });
   };
 
-  const filteredTrips = statusFilter === "ALL"
-    ? trips
-    : trips.filter(t => t.status === statusFilter);
-
-  const totalPages = Math.ceil(filteredTrips.length / TRIPS_PER_PAGE);
-  const paginatedTrips = filteredTrips.slice(
-    (currentPage - 1) * TRIPS_PER_PAGE,
-    currentPage * TRIPS_PER_PAGE
-  );
-
   const getPageNumbers = () => {
     if (totalPages <= 5) {
       return Array.from({ length: totalPages }, (_, i) => i + 1);
@@ -178,7 +187,10 @@ export default function AdminTripsPage() {
           <Select
             options={tripStatuses}
             value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
+            onChange={(e) => {
+              setStatusFilter(e.target.value);
+              setCurrentPage(1);
+            }}
           />
         </div>
       </div>
@@ -188,7 +200,7 @@ export default function AdminTripsPage() {
       </p>
 
       <TripsTable
-        trips={paginatedTrips}
+        trips={trips}
         onViewDetails={handleViewDetails}
         onUpdateStatus={handleStatusUpdate}
       />

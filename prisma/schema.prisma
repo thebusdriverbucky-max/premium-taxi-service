@@ -172,6 +172,13 @@ model Trip {
   @@index([status])
   @@index([scheduledAt])
   @@index([createdAt])
+  @@index([status, createdAt])
+}
+
+model TripNumberCounter {
+  year      Int      @id
+  value     Int
+  updatedAt DateTime @updatedAt
 }
 
 model Address {

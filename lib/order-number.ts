@@ -2,48 +2,21 @@ import { db } from "@/lib/db";
 
 /**
  * Generates a unique order number in the format #YYYY-XXXXXX
- * where YYYY is the current year and XXXXXX is a sequential number.
+ * where YYYY is the current UTC year and XXXXXX is a sequential number.
+ * The sequence is a per-year counter incremented atomically in the database,
+ * so concurrent bookings can never receive the same number.
  */
 export async function generateOrderNumber(): Promise<string> {
-  const now = new Date();
-  const year = now.getFullYear();
+  const year = new Date().getUTCFullYear();
 
-  // Find the last trip created in the current year
-  const lastTrip = await db.trip.findFirst({
-    where: {
-      createdAt: {
-        gte: new Date(`${year}-01-01T00:00:00.000Z`),
-        lt: new Date(`${year + 1}-01-01T00:00:00.000Z`),
-      },
-      tripNumber: {
-        startsWith: `#${year}-`,
-      },
-    },
-    orderBy: {
-      createdAt: "desc",
-    },
-    select: {
-      tripNumber: true,
-    },
-  });
+  const [counter] = await db.$queryRaw<{ value: number }[]>`
+    INSERT INTO "TripNumberCounter" ("year", "value", "updatedAt")
+    VALUES (${year}, 1, NOW() AT TIME ZONE 'UTC')
+    ON CONFLICT ("year") DO UPDATE
+    SET "value" = "TripNumberCounter"."value" + 1,
+        "updatedAt" = NOW() AT TIME ZONE 'UTC'
+    RETURNING "value"
+  `;
 
-  let sequence = 1;
-
-  if (lastTrip && lastTrip.tripNumber) {
-    // Extract the sequence number from the last trip number
-    // Format: #YYYY-XXXXXX or TRP-XXXXXX
-    const parts = lastTrip.tripNumber.split("-");
-    if (parts.length === 2) {
-      const lastSequence = parseInt(parts[1], 10);
-      if (!isNaN(lastSequence)) {
-        sequence = lastSequence + 1;
-      }
-    }
-  }
-
-  // Pad the sequence with leading zeros to ensure 6 digits
-  const paddedSequence = sequence.toString().padStart(6, "0");
-
-  return `#${year}-${paddedSequence}`;
+  return `#${year}-${counter.value.toString().padStart(6, "0")}`;
 }
-
