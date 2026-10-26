@@ -19,7 +19,7 @@ The platform is optimized for growth from day one: automated SEO generation and 
 - ⚡ **Framework:** Next.js 14 (App Router) & TypeScript
 - 🗄️ **Database:** PostgreSQL with Prisma ORM
 - 💳 **Payments:** Stripe Integration (PCI-compliant) + Cash on Arrival support
-- 🔐 **Authentication:** NextAuth v5 (Google, GitHub, and Email/Password)
+- 🔐 **Authentication:** NextAuth v5 (Email/Password, with optional Google sign-in)
 - 📩 **Email:** Resend - automated booking confirmations for customers and admins
 - 🚀 **Performance:** Optional rate limiting via Upstash Redis and built-in SEO optimization
 - ☁️ **Deployment:** Fully optimized for Vercel and serverless environments

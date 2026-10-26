@@ -10,6 +10,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Mail, Chrome } from "lucide-react";
+import { useGoogleSignInEnabled } from "./use-google-sign-in";
 
 const loginSchema = z.object({
   email: z.string().email("Invalid email address"),
@@ -23,6 +24,7 @@ export default function LoginContent() {
   const searchParams = useSearchParams();
   const callbackUrl = searchParams.get("callbackUrl") || "/";
   const registered = searchParams.get("registered");
+  const googleEnabled = useGoogleSignInEnabled();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const {
@@ -125,28 +127,32 @@ export default function LoginContent() {
         </p>
       </div>
 
-      <div className="mt-8 relative">
-        <div className="absolute inset-0 flex items-center">
-          <div className="w-full border-t border-taxi-gold/10"></div>
-        </div>
-        <div className="relative flex justify-center text-xs uppercase tracking-widest">
-          <span className="px-4 bg-slate-900 text-gray-500">
-            Or continue with
-          </span>
-        </div>
-      </div>
+      {googleEnabled && (
+        <>
+          <div className="mt-8 relative">
+            <div className="absolute inset-0 flex items-center">
+              <div className="w-full border-t border-taxi-gold/10"></div>
+            </div>
+            <div className="relative flex justify-center text-xs uppercase tracking-widest">
+              <span className="px-4 bg-slate-900 text-gray-500">
+                Or continue with
+              </span>
+            </div>
+          </div>
 
-      <div className="mt-8">
-        <Button
-          type="button"
-          variant="outline"
-          className="w-full py-6 gap-3 border-taxi-gold/30 bg-taxi-dark-navy text-white hover:bg-taxi-gold/10 hover:border-taxi-gold/50 transition-all shadow-inner"
-          onClick={() => handleOAuthSignIn("google")}
-        >
-          <Chrome className="w-5 h-5 text-taxi-gold" />
-          Google
-        </Button>
-      </div>
+          <div className="mt-8">
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full py-6 gap-3 border-taxi-gold/30 bg-taxi-dark-navy text-white hover:bg-taxi-gold/10 hover:border-taxi-gold/50 transition-all shadow-inner"
+              onClick={() => handleOAuthSignIn("google")}
+            >
+              <Chrome className="w-5 h-5 text-taxi-gold" />
+              Google
+            </Button>
+          </div>
+        </>
+      )}
     </div>
   );
 }

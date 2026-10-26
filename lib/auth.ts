@@ -20,11 +20,17 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     maxAge: 30 * 24 * 60 * 60,
   },
   providers: [
-    GoogleProvider({
-      clientId: process.env.GOOGLE_ID || "",
-      clientSecret: process.env.GOOGLE_SECRET || "",
-      allowDangerousEmailAccountLinking: true,
-    }),
+    // Only registered when both values are present, so an unconfigured
+    // deployment never offers a Google button that would fail on click.
+    ...(process.env.GOOGLE_ID?.trim() && process.env.GOOGLE_SECRET?.trim()
+      ? [
+          GoogleProvider({
+            clientId: process.env.GOOGLE_ID.trim(),
+            clientSecret: process.env.GOOGLE_SECRET.trim(),
+            allowDangerousEmailAccountLinking: true,
+          }),
+        ]
+      : []),
     CredentialsProvider({
       name: "Credentials",
       credentials: {
