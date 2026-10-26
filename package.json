@@ -57,8 +57,7 @@
     "stripe": "19.0.0",
     "tailwind-merge": "^2.3.0",
     "tailwindcss-animate": "^1.0.7",
-    "zod": "^4.3.6",
-    "zustand": "4.5.0"
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/bcryptjs": "2.4.6",

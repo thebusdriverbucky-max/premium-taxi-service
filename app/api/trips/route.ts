@@ -261,9 +261,6 @@ export async function POST(request: NextRequest) {
     });
     console.log("✅ Trip created:", trip.id);
 
-    // NOTE: usage of DiscountCode is tracked via the trips relation
-    // (discountCodeId on Trip). The legacy Coupon model is not used here.
-
     // Send emails only if payment is CASH. For CARD, emails are sent via Stripe webhook after successful payment
     if (paymentMethod === "CASH") {
       try {

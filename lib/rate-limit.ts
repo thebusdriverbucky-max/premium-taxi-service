@@ -34,28 +34,12 @@ export const rateLimits = redis ? {
     prefix: "taxi-project:@upstash/ratelimit/coupons",
   }),
 
-  // Wishlist: 100 requests per hour
-  wishlist: new Ratelimit({
-    redis,
-    limiter: Ratelimit.slidingWindow(100, "1 h"),
-    analytics: true,
-    prefix: "taxi-project:@upstash/ratelimit/wishlist",
-  }),
-
   // Admin API: 100 requests per minute
   admin: new Ratelimit({
     redis,
     limiter: Ratelimit.slidingWindow(100, "1 m"),
     analytics: true,
     prefix: "taxi-project:@upstash/ratelimit/admin",
-  }),
-
-  // Orders: 50 requests per minute
-  orders: new Ratelimit({
-    redis,
-    limiter: Ratelimit.slidingWindow(50, "1 m"),
-    analytics: true,
-    prefix: "taxi-project:@upstash/ratelimit/orders",
   }),
 
   // Trips: 50 requests per minute
