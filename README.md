@@ -21,7 +21,7 @@ The platform is optimized for growth from day one: automated SEO generation and 
 - 💳 **Payments:** Stripe Integration (PCI-compliant) + Cash on Arrival support
 - 🔐 **Authentication:** NextAuth v5 (Google, GitHub, and Email/Password)
 - 📩 **Email:** Resend - automated booking confirmations for customers and admins
-- 🚀 **Performance:** Rate limiting via Redis and built-in SEO optimization
+- 🚀 **Performance:** Optional rate limiting via Upstash Redis and built-in SEO optimization
 - ☁️ **Deployment:** Fully optimized for Vercel and serverless environments
 
 ## Getting Started
@@ -45,6 +45,27 @@ with the purchased source. The included Template CI workflow installs from the
 lockfile, runs tests and TypeScript, rehearses the production database build
 contract on PostgreSQL 16, repeats the safe bootstrap, and rejects
 migration/schema drift.
+
+## Admin account setup (do this right after the first deploy)
+
+The admin panel is unlocked by the `ADMIN_EMAIL` environment variable: whoever
+signs in with exactly that email address receives the admin role. There is no
+separate admin invite step, which keeps the setup short, but it means the order
+of steps matters:
+
+1. Set `ADMIN_EMAIL` to the address you will use as the site owner.
+2. Deploy the site.
+3. **Immediately** open `/register` on the deployed site and create an account
+   with exactly that email address.
+4. Only after that, connect your custom domain and share the site URL.
+
+Until the admin account exists, anyone who knows the deployment URL could
+register with that email address first. If you find an admin account you did
+not create, contact support (see [Support](#support)) and we will help you
+remove it in your database SQL editor. Afterwards, generate a new
+`NEXTAUTH_SECRET` and redeploy: sessions are signed with that secret and stay
+valid for up to 30 days, so rotating it is what signs out an existing
+unauthorized session (all users will need to sign in again).
 
 ## Database deployment contract
 
@@ -88,7 +109,9 @@ destination and there is no mutating confirmation `GET` endpoint.
 The included `vercel.json` also schedules `/api/cron/reconcile-stripe` daily at
 04:15 UTC. Set `CRON_SECRET` so Vercel can authenticate that request. The cron
 checks unresolved Stripe trips in batches and recovers from a delayed or missed
-browser return/webhook, but it does not replace the webhook. Vercel Hobby cron
+browser return/webhook, but it does not replace the webhook. It also cancels
+card bookings whose Stripe Checkout never started (older than one hour), so a
+failed attempt does not stay pending in the admin panel. Vercel Hobby cron
 jobs can run at most once per day and their execution time may vary, so payment
 confirmation must never depend on the cron running immediately.
 
@@ -100,6 +123,45 @@ The first successful settlement also creates a durable booking-email delivery
 record in the same database transaction. Webhook, browser confirmation, and cron
 delivery attempts reuse deterministic provider idempotency keys. A failed email
 therefore remains retryable without reverting or duplicating payment settlement.
+
+### Refunds
+
+The admin panel has no refund button. Issue card refunds in the Stripe Dashboard
+(Payments → select the payment → Refund). The `charge.refunded` webhook then
+updates the trip automatically: a partial refund marks the payment as partially
+refunded, and a full refund marks both the payment and the trip as refunded.
+Cash payments are settled outside the site, so refund them directly to the
+customer and update the trip status in the admin panel if needed.
+
+## Email delivery
+
+Email is sent through [Resend](https://resend.com) and is optional for a first
+deploy, but without it the site cannot send booking confirmations, password
+reset links, contact form messages, or trip status updates.
+
+- **`RESEND_API_KEY` is not set:** nothing is sent. The contact form and the
+  forgot-password page tell visitors that email is unavailable and show the
+  phone number and email from Admin → Settings, so fill those in. The admin
+  area shows a warning banner.
+- **`RESEND_API_KEY` is set but `EMAIL_FROM` is not:** mail is sent from
+  Resend's test sender (`onboarding@resend.dev`), which Resend delivers only to
+  your own Resend account email. Customers receive nothing, and the admin
+  banner says so.
+- **Both are set:** `EMAIL_FROM` must use a domain verified in Resend. The admin
+  panel can only check that the variables are present, so make a test booking
+  to confirm delivery.
+
+Card booking confirmations are kept in the email outbox and retried by the daily
+cron while the booking is recent (48 hours) or the ride is still upcoming, so
+configuring email shortly after a booking still delivers it. Cash booking
+emails are sent once, when the booking is made.
+
+## Support
+
+Questions, setup problems, or an admin account you did not create:
+
+- Contact form: [https://www.ownyourwebsite.app/contact](https://www.ownyourwebsite.app/contact)
+- Email: [support@ownyourwebsite.app](mailto:support@ownyourwebsite.app)
 
 ## License Configuration
 
